@@ -7,3 +7,9 @@ endif()
 
 add_executable(cubes cubes.cpp)
 target_link_libraries(cubes PRIVATE cubozoa)
+target_copy_webgpu_binaries(cubes)
+
+if (EMSCRIPTEN)
+    set_target_properties(cubes PROPERTIES SUFFIX ".html")
+    target_link_options(cubes PRIVATE -sASYNCIFY)
+endif()

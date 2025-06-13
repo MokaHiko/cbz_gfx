@@ -3,14 +3,24 @@
 
 namespace cbz {
 
-enum class Result {
-  Success = 0,
-  Failure = 1,
+struct InitDesc {
+  const char *name;
+  uint32_t width;
+  uint32_t height;
 };
 
-[[nodiscard]] Result init();
+CBZ_API class App {
+public:
+  App() = default;
+  App(App &&) = delete;
+  App &operator=(App &&) = delete;
 
-void shutdown();
+  [[nodiscard]] Result init(InitDesc initDesc);
+
+  void run();
+
+  void shutdown();
+};
 
 } // namespace cbz
 

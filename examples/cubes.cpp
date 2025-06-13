@@ -1,7 +1,15 @@
+#include <cstdlib>
+
 #include <cubozoa/cubozoa.h>
 
 int main() {
-  cbz::init();
+  cbz::App app;
 
-  cbz::shutdown();
+  if (app.init({"Cubes", 1280, 720}) != cbz::Result::Success) {
+    return -1;
+  }
+
+  app.run();
+
+  app.shutdown();
 }
