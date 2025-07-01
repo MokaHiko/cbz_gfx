@@ -3,6 +3,7 @@ docs
 
 # build directories
 [Bb]uild
+[Bb]uild-web
 
 # clang
 .cache

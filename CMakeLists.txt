@@ -8,23 +8,42 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/gabime/spdlog.git
   GIT_TAG v1.15.3
 )
-
 FetchContent_MakeAvailable(spdlog)
 
 if (NOT EMSCRIPTEN)
-    # Add the 'glfw' directory, which contains the definition of a 'glfw' target
     add_subdirectory(third_party/glfw)
     add_subdirectory(third_party/wgpu-native)
 else()
     # Create a mock 'glfw' target that just sets the `-sUSE_GLFW=3` link option:
     add_library(glfw INTERFACE)
-    target_link_options(glfw INTERFACE -sUSE_GLFW=3)
+    target_link_options(glfw INTERFACE -sUSE_GLFW=3 -sASYNCIFY -sUSE_WEBGPU -sASSERTIONS -sALLOW_MEMORY_GROWTH)
 endif()
 add_subdirectory(third_party/glfw3webgpu)
+add_subdirectory(third_party/imgui)
+add_subdirectory(third_party/glm)
+add_subdirectory(third_party/murmurhash)
 
-add_library(${PROJECT_NAME} src/core/cbz_file.cpp src/cubuzoa.cpp)
-target_link_libraries(${PROJECT_NAME} PUBLIC spdlog glfw webgpu glfw3webgpu)
+add_library(${PROJECT_NAME}
+            src/core/cubozoa_file.cpp
+
+            src/math/cubozoa_math.cpp
+
+            src/renderer/cubozoa_renderer_webgpu.cpp
+
+            src/cubozoa.cpp)
+
+target_link_libraries(${PROJECT_NAME} PUBLIC spdlog glfw glm webgpu glfw3webgpu imgui murmurhash)
+
+if(EMSCRIPTEN)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC WEBGPU_BACKEND_EMSCRIPTEN)
+else()
+
+    target_compile_definitions(${PROJECT_NAME} PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
+
+endif()
+
 target_include_directories(${PROJECT_NAME} PUBLIC include)
+target_include_directories(${PROJECT_NAME} PUBLIC src)
 target_precompile_headers(${PROJECT_NAME} PUBLIC src/cbz_pch.h)
 set_target_properties(${PROJECT_NAME} PROPERTIES
     CXX_STANDARD 17
@@ -39,5 +58,16 @@ else()
     target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -pedantic)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 endif()
+
+if (XCODE)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        XCODE_GENERATE_SCHEME ON
+        XCODE_SCHEME_ENABLE_GPU_FRAME_CAPTURE_MODE "Metal"
+    )
+endif()
+
+target_compile_definitions(${PROJECT_NAME} PUBLIC
+    CBZ_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/"
+)
 
 add_subdirectory(examples)

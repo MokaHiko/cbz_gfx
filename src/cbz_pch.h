@@ -1,11 +1,13 @@
-#ifndef CBZ_PCH_H
-#define CBZ_PCH_H
+#ifndef CBZ_PCH_H_
+#define CBZ_PCH_H_
 
 #include <memory>
 #include <string>
 #include <vector>
+#include <array>
 
 #include <stdint.h>
+#include <algorithm>
 
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -53,13 +55,14 @@
 namespace cbz {
 
 enum class Result {
-  Success = 0,
-  Failure = 1,
+  eSuccess = 0,
+  eFailure = 1,
 
-  FileError,
+  eFileError,
 
-  GLFWError,
-  WGPUError,
+  eGLFWError,
+  eWGPUError,
+  eSlangError,
 };
 
 }
