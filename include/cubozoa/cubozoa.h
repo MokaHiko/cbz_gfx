@@ -9,6 +9,8 @@ CBZ_API struct InitDesc {
   const char *name;
   uint32_t width;
   uint32_t height;
+
+  NetworkStatus netStatus;
 };
 
 CBZ_API Result init(InitDesc initDesc);

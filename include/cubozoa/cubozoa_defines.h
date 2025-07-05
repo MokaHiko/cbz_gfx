@@ -3,6 +3,12 @@
 
 namespace cbz {
 
+enum class NetworkStatus {
+  eNone,
+  eHost,
+  eClient,
+};
+
 // Limits
 constexpr uint32_t MAX_DRAW_CALLS = 128;
 static_assert(MAX_DRAW_CALLS <= std::numeric_limits<uint32_t>::max(),

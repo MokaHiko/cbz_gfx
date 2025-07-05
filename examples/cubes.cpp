@@ -29,7 +29,7 @@ public:
     if (cbz::init({"Cubes", 1280, 720}) != cbz::Result::eSuccess) {
     }
 
-    mTriangleSH = cbz::shaderCreate("assets/shaders/triangle.wgsl");
+    mTriangleSH = cbz::shaderCreate("assets/shaders/triangle.slang");
     mTrianglePH = cbz::graphicsProgramCreate(mTriangleSH);
 
     cbz::VertexLayout layout;

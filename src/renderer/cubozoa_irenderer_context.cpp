@@ -2,5 +2,4 @@
 
 namespace cbz {
 
-
 }; // namespace cbz

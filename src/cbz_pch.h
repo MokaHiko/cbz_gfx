@@ -1,13 +1,13 @@
 #ifndef CBZ_PCH_H_
 #define CBZ_PCH_H_
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
-#include <array>
 
-#include <stdint.h>
 #include <algorithm>
+#include <stdint.h>
 
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -63,6 +63,8 @@ enum class Result {
   eGLFWError,
   eWGPUError,
   eSlangError,
+
+  eNetworkFailure,
 };
 
 }

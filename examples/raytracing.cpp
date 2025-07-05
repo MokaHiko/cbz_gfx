@@ -1,7 +1,3 @@
-#include "GLFW/glfw3.h"
-#include "cubozoa/cubozoa_defines.h"
-#include "glm/matrix.hpp"
-#include <cstdint>
 #include <cubozoa/cubozoa.h>
 
 #ifdef __EMSCRIPTEN__
@@ -13,6 +9,8 @@
 #include <glm/ext.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
+
+#include <GLFW/glfw3.h>
 
 std::vector<float> vertices = {
     // x,   y,     z,   normal,           uv
@@ -27,11 +25,21 @@ std::vector<uint16_t> indices = {
     0, 2, 3  // Triangle #1 connects points #0, #2 and #3
 };
 
-class GltfViewer {
+struct Color {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+  uint8_t a;
+};
+
+constexpr uint32_t kWidth = 1280;
+constexpr uint32_t kHeight = 720;
+
+class RTWeekend {
 public:
   void init(cbz::NetworkStatus netStatus = cbz::NetworkStatus::eClient) {
 
-    if (cbz::init({"GltfViewer", 1280, 720, netStatus}) !=
+    if (cbz::init({"RTWeekend", kWidth, kHeight, netStatus}) !=
         cbz::Result::eSuccess) {
       exit(0);
     }
@@ -56,33 +64,30 @@ public:
                                       static_cast<uint32_t>(indices.size()),
                                       indices.data());
 
-    mAlbedoTH =
-        cbz::texture2DCreate(cbz::TextureFormat::eRGBA8Unorm, 1, 1, "albedo");
-
-    std::array<uint8_t, 4> color = {255, 255, 255, 255};
-    cbz::texture2DUpdate(mAlbedoTH, color.data(), 1);
+    mAlbedoTH = cbz::texture2DCreate(cbz::TextureFormat::eRGBA8Unorm, kWidth,
+                                     kHeight, "albedo");
 
     mAlbedoSamplerUH =
         cbz::uniformCreate("albedoSampler", cbz::UniformType::eSampler);
   }
 
   void update() {
-    uint8_t r = (uint8_t)(glm::sin(glfwGetTime()) * 255.0f);
-    uint8_t g = (uint8_t)(glm::cos(glfwGetTime()) * 255.0f);
-    std::array<uint8_t, 4> color = {r, g, 255, 255};
-    cbz::texture2DUpdate(mAlbedoTH, color.data(), 1);
+    static std::array<Color, kWidth * kHeight> blit = {};
 
-    static glm::vec3 position{0.0};
-    glm::mat4 model = glm::translate(glm::mat4(1.0), position);
-    position.x += glfwGetTime() * 0.001f;
+    float s = sin(glfwGetTime());
+    float c = cos(glfwGetTime());
 
-    glm::mat4 view = glm::lookAt(glm::vec3(0.0, 0.0f, 5.0f), glm::vec3(0.0),
-                                 glm::vec3(0.0f, 1.0f, 0.0f));
+    for (uint32_t y = 0; y < kHeight; y++) {
+      for (uint32_t x = 0; x < kWidth; x++) {
+        blit[y * kWidth + x] =
+            Color{static_cast<uint8_t>(s * x * 255 / (kWidth - 1)),
+                  static_cast<uint8_t>(c * y * 255 / (kHeight - 1)), 0, 255};
+      }
+    }
 
-    glm::mat4 proj =
-        glm::perspective(glm::radians(90.0), 16.0 / 9.0, 0.1, 1000.0);
+    cbz::texture2DUpdate(mAlbedoTH, blit.data(), kWidth * kHeight);
 
-    glm::mat4 transform = proj * view * model;
+    glm::mat4 transform = glm::mat4(1.0f);
     transform = glm::transpose(transform);
     cbz::transformBind(glm::value_ptr(transform));
 
@@ -126,7 +131,7 @@ int main(int argc, char **argv) {
     printf("%s", argv[i]);
   }
 
-  GltfViewer app = {};
+  RTWeekend app = {};
 
   if (argc > 1) {
     app.init(cbz::NetworkStatus::eHost);
@@ -142,7 +147,7 @@ int main(int argc, char **argv) {
   emscripten_set_main_loop_arg(
       [](void *userData) {
         static int i = 0;
-        GltfViewer *app = reinterpret_cast<GltfViewer *>(userData);
+        RTWeekend *app = reinterpret_cast<RTWeekend *>(userData);
         app->update();
       },
       (void *)&app, // value sent to the 'userData' arg of the callback

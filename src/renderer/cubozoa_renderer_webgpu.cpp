@@ -1,17 +1,20 @@
 #include "cubozoa_renderer_webgpu.h"
 
+#include "GLFW/glfw3.h"
+#include "cbz_pch.h"
 #include "core/cubozoa_file.h"
+#include "cubozoa/net/cubozoa_net_http.h"
 #include "cubozoa_irenderer_context.h"
 
+#include <filesystem>
 #include <webgpu/webgpu.h>
 
 #include <murmurhash/MurmurHash3.h>
+#include <nlohmann/json.hpp>
 
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_wgpu.h>
 #include <imgui.h>
-
-#include <fstream>
 
 constexpr static WGPUTextureDimension
 TextureDimToWGPU(cbz::TextureDimension dim) {
@@ -44,6 +47,7 @@ static uint32_t IndexFormatGetSize(WGPUIndexFormat format) {
 }
 
 static std::shared_ptr<spdlog::logger> sLogger;
+static std::unique_ptr<cbz::net::IHttpClient> sShaderHttpClient;
 
 static WGPUDevice sDevice;
 static WGPULimits sLimits;
@@ -420,6 +424,10 @@ Result TextureWebGPU::create(uint32_t w, uint32_t h, uint32_t depth,
 }
 
 void TextureWebGPU::update(void *data, uint32_t count) {
+  const uint32_t formatSize = TextureFormatGetSize(
+      static_cast<TextureFormat>(wgpuTextureGetFormat(mTexture)));
+  const uint32_t size = formatSize * count;
+
   WGPUImageCopyTexture destination = {};
   destination.nextInChain = nullptr;
   destination.texture = mTexture;
@@ -437,10 +445,6 @@ void TextureWebGPU::update(void *data, uint32_t count) {
   extent.width = wgpuTextureGetWidth(mTexture);
   extent.height = wgpuTextureGetHeight(mTexture);
   extent.depthOrArrayLayers = wgpuTextureGetDepthOrArrayLayers(mTexture);
-
-  uint32_t size = TextureFormatGetSize(static_cast<TextureFormat>(
-                      wgpuTextureGetFormat(mTexture))) *
-                  count;
 
   wgpuQueueWriteTexture(sQueue, &destination, data, size, &dataLayout, &extent);
 }
@@ -676,20 +680,22 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
 Result ShaderWebGPU::create(const std::string &path) {
   std::filesystem::path shaderPath = path;
 
-  std::filesystem::path shaderReflectionPath = shaderPath;
-  shaderReflectionPath.replace_extension("json");
-
-  sLogger->trace("{}", shaderPath.c_str());
-  sLogger->trace("{}", shaderReflectionPath.c_str());
-
-  std::ifstream reflectionFile(shaderReflectionPath);
-
-  if (!reflectionFile.is_open()) {
-    return Result::eFailure;
+  std::string slangSrcCode;
+  if (LoadFileAsText(shaderPath.string(), slangSrcCode) != Result::eSuccess) {
+    return Result::eWGPUError;
   }
 
+  nlohmann::json bodyJson;
+  bodyJson["source"] = slangSrcCode;
+  bodyJson["entryPoint"] = "vertexMain";
+  bodyJson["target"] = "WGSL";
+
+  net::HttpResponse res =
+      sShaderHttpClient->postJson("/compile", bodyJson.dump().c_str());
+  nlohmann::json responseJson = nlohmann::json::parse(res.readAsCString());
+
   // Parse uniforms
-  nlohmann::json json = nlohmann::json::parse(reflectionFile);
+  nlohmann::json json = responseJson["reflection"];
   for (const auto &paramJson : json["parameters"]) {
     parseJsonRecursive(paramJson, -1);
   }
@@ -762,18 +768,14 @@ Result ShaderWebGPU::create(const std::string &path) {
     break;
   }
 
-  reflectionFile.close();
-
-  std::string shaderSrcCode;
-  if (LoadFileAsText(shaderPath.string(), shaderSrcCode) != Result::eSuccess) {
-    return Result::eWGPUError;
-  }
   WGPUShaderModuleDescriptor shaderModuleDesc{};
 
   WGPUShaderModuleWGSLDescriptor shaderCodeDesc;
   shaderCodeDesc.chain.next = nullptr;
   shaderCodeDesc.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
-  shaderCodeDesc.code = shaderSrcCode.c_str();
+
+  const std::string &wgslSrcCode = responseJson["code"].get<std::string>();
+  shaderCodeDesc.code = wgslSrcCode.c_str();
 
   shaderModuleDesc.nextInChain = &shaderCodeDesc.chain;
   shaderModuleDesc.label = path.c_str();
@@ -959,6 +961,18 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   sLogger->set_level(spdlog::level::trace);
   sLogger->set_pattern("[%^%l%$][CBZ|RENDERER|WGPU] %v");
 
+  net::Endpoint cbzEndPoint = {
+      net::Address("localhost"),
+      net::Port(6000),
+  };
+
+  sShaderHttpClient = net::httpClientCreate(cbzEndPoint);
+  if (!sShaderHttpClient) {
+    return Result::eFailure;
+  }
+  sLogger->info("Shader compiler backend connected ({}:{})",
+                cbzEndPoint.address.c_str(), cbzEndPoint.port.c_str());
+
 #ifdef WEBGPU_BACKEND_EMSCRIPTEN
   WGPUInstance instance = wgpuCreateInstance(nullptr);
 #else
@@ -1131,8 +1145,13 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   return Result::eSuccess;
 }
 
+static double lastTime = glfwGetTime();
+static double deltaTime = 0.0f;
 void RendererContextWebGPU::drawSorted(
     const std::vector<RenderCommand> &sortedDraws) {
+  deltaTime = glfwGetTime() - lastTime;
+  lastTime = glfwGetTime();
+
   WGPUSurfaceTexture surfaceTexture;
   wgpuSurfaceGetCurrentTexture(sSurface, &surfaceTexture);
   switch (surfaceTexture.status) {
@@ -1368,9 +1387,12 @@ void RendererContextWebGPU::drawSorted(
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
-  ImGui::Begin("Hey");
+  ImGui::Begin("Profiling");
+  ImGui::Text("fps: %3.0f", ImGui::GetIO().Framerate);
+
   static float vec[3];
   ImGui::SliderFloat3("Color", vec, 0.0f, 100.0f);
+
   ImGui::End();
 
   ImGui::EndFrame();
@@ -1492,8 +1514,7 @@ Result RendererContextWebGPU::textureCreate(TextureHandle th,
     mTextures.resize(th.idx + 1);
   }
 
-  return mTextures[th.idx].create(w, h, depth,
-                                  TextureDimToWGPU(dimension),
+  return mTextures[th.idx].create(w, h, depth, TextureDimToWGPU(dimension),
                                   static_cast<WGPUTextureFormat>(format));
 }
 

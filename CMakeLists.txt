@@ -23,16 +23,26 @@ add_subdirectory(third_party/imgui)
 add_subdirectory(third_party/glm)
 add_subdirectory(third_party/murmurhash)
 
+add_library(asio INTERFACE)
+target_include_directories(asio INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/asio/asio/include)
+target_compile_definitions(asio INTERFACE ASIO_STANDALONE)
+
 add_library(${PROJECT_NAME}
+            src/core/cubozoa_memory.cpp
+
             src/core/cubozoa_file.cpp
 
             src/math/cubozoa_math.cpp
 
+            src/renderer/cubozoa_irenderer_context.cpp
             src/renderer/cubozoa_renderer_webgpu.cpp
+
+            src/net/cubozoa_net.cpp
+            src/net/cubozoa_net_http.cpp
 
             src/cubozoa.cpp)
 
-target_link_libraries(${PROJECT_NAME} PUBLIC spdlog glfw glm webgpu glfw3webgpu imgui murmurhash)
+target_link_libraries(${PROJECT_NAME} PUBLIC spdlog glfw glm webgpu glfw3webgpu imgui murmurhash asio)
 
 if(EMSCRIPTEN)
     target_compile_definitions(${PROJECT_NAME} PUBLIC WEBGPU_BACKEND_EMSCRIPTEN)

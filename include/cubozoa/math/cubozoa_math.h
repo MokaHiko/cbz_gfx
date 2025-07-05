@@ -3,15 +3,13 @@
 
 #include <glm/glm.hpp>
 
-namespace cbz {
-namespace math {
+namespace cbz::math {
 
 struct Ray {
   glm::vec3 origin;
   glm::vec3 dir;
 };
 
-}; // namespace math
-} // namespace cbz
+} // namespace cbz::math
 
 #endif
