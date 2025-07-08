@@ -63,14 +63,19 @@ enum class BindingType {
   eNone,
 
   eUniformBuffer,
-  eStorageBuffer,
   eSampler,
+
+  eStructuredBuffer,
+  eRWStructuredBuffer,
+
   eTexture2D,
 };
 
-struct Binding {
+struct BindingDesc {
   std::string name;
   BindingType type;
+
+  uint8_t index;
 
   union {
     uint32_t size;
@@ -78,35 +83,54 @@ struct Binding {
   };
 };
 
-struct UniformBinding {
-  UniformType type;
-
-  struct {
-    UniformHandle handle;
-  } uniformBuffer;
-
-  struct {
-    SamplerHandle samplerHandle;
-    TextureHandle handle;
-  } texture;
-};
-
-struct RenderCommand {
-  std::array<UniformBinding, MAX_DRAW_UNIFORMS> uniforms;
-  uint32_t uniformCount;
-
-  VertexBufferHandle vbh;
-  IndexBufferHandle ibh;
+struct Binding {
+  BindingType type;
 
   union {
-    GraphicsProgramHandle gph;
-    ComputeProgramHandle cph;
-  };
+    struct {
+      UniformType valueType;
+      UniformHandle handle;
+    } uniformBuffer;
 
-  inline uint32_t getDescriptorHash() const { return sortKey & 0xFFFFFFFF; }
+    struct {
+      uint32_t slot;
+      TextureHandle handle;
+    } texture;
+
+    struct {
+      uint32_t slot;
+      SamplerHandle handle;
+    } sampler;
+
+    struct {
+      uint32_t slot;
+      UniformType valueType;
+      StructuredBufferHandle handle;
+    } storageBuffer;
+  } value;
+};
+
+struct ShaderProgramCommand {
+  union {
+    struct {
+      VertexBufferHandle vbh;
+      IndexBufferHandle ibh;
+      GraphicsProgramHandle ph;
+    } graphics;
+
+    struct {
+      uint32_t x, y, z; // dispatchSizes
+      ComputeProgramHandle ph;
+    } compute;
+  } program;
+  ProgramType programType;
+
+  std::vector<Binding> bindings;
 
   uint64_t sortKey;
-  uint32_t drawId;
+  uint32_t id;
+
+  inline uint32_t getDescriptorHash() const { return sortKey & 0xFFFFFFFF; }
 };
 
 class IRendererContext {
@@ -115,6 +139,7 @@ public:
   virtual ~IRendererContext() = default;
 
   virtual Result init(uint32_t width, uint32_t height, void *nsfh) = 0;
+
   virtual void shutdown() = 0;
 
   [[nodiscard]] virtual Result
@@ -134,9 +159,15 @@ public:
                       const void *data = nullptr) = 0;
 
   virtual void uniformBufferUpdate(UniformHandle uh, void *data,
-                                   uint32_t num) = 0;
+                                   uint32_t num = 0) = 0;
 
   virtual void uniformBufferDestroy(UniformHandle uh) = 0;
+
+  [[nodiscard]] virtual Result
+  structuredBufferCreate(StructuredBufferHandle sbh, UniformType type,
+                         uint16_t num, const void *data = nullptr) = 0;
+
+  virtual void structuredBufferDestroy(StructuredBufferHandle sbh) = 0;
 
   [[nodiscard]] virtual SamplerHandle
   getSampler(TextureBindingDesc texBindingDesc) = 0;
@@ -158,7 +189,13 @@ public:
                                                      ShaderHandle sh) = 0;
   virtual void graphicsProgramDestroy(GraphicsProgramHandle gph) = 0;
 
-  virtual void drawSorted(const std::vector<RenderCommand> &sortedDraws) = 0;
+  [[nodiscard]] virtual Result computeProgramCreate(ComputeProgramHandle cph,
+                                                    ShaderHandle sh) = 0;
+
+  virtual void computeProgramDestroy(ComputeProgramHandle cph) = 0;
+
+  virtual void submitSorted(const ShaderProgramCommand *sortedCmds,
+                            uint32_t count) = 0;
 };
 
 }; // namespace cbz

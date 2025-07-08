@@ -1,3 +1,4 @@
+#include "cbz_pch.h"
 #include "cubozoa/net/cubozoa_net_http.h"
 
 #ifdef WEBGPU_BACKEND_WGPU
@@ -128,6 +129,7 @@ Address serverAddress("localhost");
 Port port = 13;
 
 Result initClient() {
+  return Result::eSuccess;
   sLogger = spdlog::stdout_color_mt("cbzclient");
   sLogger->set_level(spdlog::level::trace);
   sLogger->set_pattern("[%^%l%$][NET] %v");

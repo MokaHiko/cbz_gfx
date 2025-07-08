@@ -3,9 +3,11 @@
 #include "GLFW/glfw3.h"
 #include "cbz_pch.h"
 #include "core/cubozoa_file.h"
+#include "cubozoa/cubozoa_defines.h"
 #include "cubozoa/net/cubozoa_net_http.h"
 #include "cubozoa_irenderer_context.h"
 
+#include <ctime>
 #include <filesystem>
 #include <webgpu/webgpu.h>
 
@@ -56,6 +58,8 @@ static WGPUQueue sQueue;
 static WGPUSurface sSurface;
 static WGPUTextureFormat sSurfaceFormat;
 
+static std::vector<cbz::ShaderWebGPU> mShaders;
+
 static std::pair<cbz::Result, WGPURequiredLimits>
 CheckAndCreateRequiredLimits(WGPUAdapter adapter) {
   WGPUSupportedLimits supportedLimits;
@@ -91,10 +95,11 @@ CheckAndCreateRequiredLimits(WGPUAdapter adapter) {
 
   requiredLimits.limits.maxBindGroups = 2;
   requiredLimits.limits.maxUniformBuffersPerShaderStage = 1;
-  requiredLimits.limits.maxUniformBufferBindingSize = 65536; // Minimum
+  requiredLimits.limits.maxUniformBufferBindingSize = 65536; // Default
 
   requiredLimits.limits.maxStorageBuffersPerShaderStage = 1;
-  requiredLimits.limits.maxStorageBufferBindingSize = 1;
+  requiredLimits.limits.maxStorageBufferBindingSize =
+      supportedLimits.limits.maxStorageBufferBindingSize;
 
   return {cbz::Result::eSuccess, requiredLimits};
 };
@@ -172,6 +177,7 @@ public:
   [[nodiscard]] Result indexBufferCreate(IndexBufferHandle ibh,
                                          IndexFormat format, uint32_t size,
                                          const void *data = nullptr) override;
+
   void indexBufferDestroy(IndexBufferHandle ibh) override;
 
   [[nodiscard]] Result uniformBufferCreate(UniformHandle uh, UniformType type,
@@ -181,6 +187,12 @@ public:
   void uniformBufferUpdate(UniformHandle uh, void *data, uint32_t num) override;
 
   void uniformBufferDestroy(UniformHandle uh) override;
+
+  [[nodiscard]] Result
+  structuredBufferCreate(StructuredBufferHandle sbh, UniformType type,
+                         uint16_t num, const void *data = nullptr) override;
+
+  void structuredBufferDestroy(StructuredBufferHandle sbh) override;
 
   [[nodiscard]] SamplerHandle
   getSampler(TextureBindingDesc texBindingDesc) override;
@@ -195,6 +207,7 @@ public:
 
   [[nodiscard]] Result shaderCreate(ShaderHandle sh,
                                     const std::string &path) override;
+
   void shaderDestroy(ShaderHandle sh) override;
 
   [[nodiscard]] Result graphicsProgramCreate(GraphicsProgramHandle gph,
@@ -202,22 +215,34 @@ public:
 
   void graphicsProgramDestroy(GraphicsProgramHandle gph) override;
 
+  [[nodiscard]] Result computeProgramCreate(ComputeProgramHandle cph,
+                                            ShaderHandle sh) override;
+
+  void computeProgramDestroy(ComputeProgramHandle cph) override;
+
   void shutdown() override;
 
-  void drawSorted(const std::vector<RenderCommand> &sortedDraws) override;
+  void submitSorted(const ShaderProgramCommand *sortedCmds,
+                    uint32_t count) override;
+
+private:
+  [[nodiscard]] WGPUBindGroup FindOrCreateBindGroup(const ShaderWebGPU *shader,
+                                                    const Binding *bindings,
+                                                    uint32_t bindingCount);
 
 private:
   std::vector<VertexBufferWebGPU> mVertexBuffers;
   std::vector<IndexBufferWebGPU> mIndexBuffers;
   std::vector<UniformBufferWebWGPU> mUniformBuffers;
+  std::vector<StorageBufferWebWGPU> mStorageBuffers;
 
   std::vector<TextureWebGPU> mTextures;
-
-  std::unordered_map<uint32_t, WGPUBindGroup> mBindingGroups;
   std::unordered_map<uint32_t, WGPUSampler> mSamplers;
 
-  std::vector<ShaderWebGPU> mShaders;
+  std::unordered_map<uint32_t, WGPUBindGroup> mBindingGroups;
+
   std::vector<GraphicsProgramWebGPU> mGraphicsPrograms;
+  std::vector<ComputeProgramWebGPU> mComputePrograms;
 };
 
 Result VertexBufferWebGPU::create(const VertexLayout &vertexLayout,
@@ -317,7 +342,6 @@ Result IndexBufferWebGPU::create(WGPUIndexFormat format, uint32_t count,
   }
 
   if (data) {
-    // TODO: Handle queue write buffer allignment.
     wgpuQueueWriteBuffer(sQueue, mBuffer, 0, data, size);
   }
 
@@ -339,6 +363,7 @@ void IndexBufferWebGPU::destroy() {
 
   wgpuBufferDestroy(mBuffer);
 }
+
 [[nodiscard]] Result UniformBufferWebWGPU::create(UniformType type,
                                                   uint16_t num,
                                                   const void *data,
@@ -393,6 +418,64 @@ void UniformBufferWebWGPU::update(const void *data, uint16_t num) {
 void UniformBufferWebWGPU::destroy() {
   if (!mBuffer) {
     spdlog::warn("Attempting to destroy invalid uniform buffer");
+    return;
+  }
+
+  wgpuBufferDestroy(mBuffer);
+}
+
+Result StorageBufferWebWGPU::create(UniformType type, uint16_t num,
+                                    const void *data, const std::string &name) {
+  mElementType = type;
+  mElementCount = num;
+  uint32_t size = UniformTypeGetSize(mElementType) * mElementCount;
+
+  if (size <= 0) {
+    sLogger->error("Cannot create uniform '{}' buffer with size 0!", name);
+    return Result::eWGPUError;
+  }
+
+  if (size > sLimits.maxStorageBufferBindingSize) {
+    sLogger->error("Cannot create uniform buffer with size > "
+                   "maxStorageBufferBindingSize({})!",
+                   sLimits.maxBufferSize);
+    return Result::eWGPUError;
+  }
+
+  WGPUBufferDescriptor bufferDesc = {};
+  bufferDesc.nextInChain = nullptr;
+  bufferDesc.label = name.c_str();
+  bufferDesc.usage = WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
+                     WGPUBufferUsage_CopySrc;
+  bufferDesc.size = size;
+  bufferDesc.mappedAtCreation = false;
+
+  mBuffer = wgpuDeviceCreateBuffer(sDevice, &bufferDesc);
+  if (!mBuffer) {
+    spdlog::error("Failed to create Uniform buffer!");
+    return Result::eWGPUError;
+  }
+
+  if (data) {
+    wgpuQueueWriteBuffer(sQueue, mBuffer, 0, data, size);
+  }
+
+  return Result::eSuccess;
+}
+
+void StorageBufferWebWGPU::update(const void *data, uint16_t num) {
+  uint32_t size = UniformTypeGetSize(mElementType) * num;
+
+  if (num == 0) {
+    size = UniformTypeGetSize(mElementType) * mElementCount;
+  }
+
+  wgpuQueueWriteBuffer(sQueue, mBuffer, 0, data, size);
+}
+
+void StorageBufferWebWGPU::destroy() {
+  if (!mBuffer) {
+    spdlog::warn("Attempting to destroy invalid storage buffer!");
     return;
   }
 
@@ -518,47 +601,63 @@ void TextureWebGPU::destroy() {
 }
 
 void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
-                                      bool isBinding) {
+                                      bool isBinding, uint32_t offsets) {
   std::string name = varJson.value("name", "<unnamed>");
 
-  const auto &bindingJson = varJson["binding"];
-  std::string bindingKind = bindingJson.value("kind", "<unknown_binding_kind");
-
   bool isNewBinding = false;
-  if (bindingKind == "descriptorTableSlot") {
-    int bindingIndex = bindingJson.value("index", -1);
 
-    mBindings.push_back({});
+  if (varJson.contains("binding")) {
+    const auto &bindingJson = varJson["binding"];
+    std::string bindingKind =
+        bindingJson.value("kind", "<unknown_binding_kind");
 
-    mBindings[bindingIndex].name = name;
-    isNewBinding = true;
+    if (bindingKind == "descriptorTableSlot") {
+      const auto &typeJson =
+          varJson.contains("type") ? varJson["type"] : varJson;
+      std::string typeKind = typeJson.value("kind", "<unknown_kind>");
 
-    sLogger->trace("binding(@{}): {}", bindingIndex, name);
-  }
+      int bindingIndex = bindingJson.value("index", -1);
+      if (typeKind != "struct") {
+        mBindingDescs.push_back({});
+        mBindingDescs.back().index = offsets + bindingIndex;
+        mBindingDescs.back().name = name;
 
-  if (bindingKind == "uniform") {
-    uint32_t offset = bindingJson.value("offset", -1);
-    uint32_t size = bindingJson.value("size", -1);
+        isNewBinding = true;
 
-    if (isBinding) {
-      mBindings.back().size = std::max(mBindings.back().size, offset + size);
+        sLogger->trace("binding(@{}): '{}'", mBindingDescs.back().index, name);
+      } else {
+        sLogger->trace("'{}' contains binding: ", name);
+        offsets = bindingIndex;
+      }
     }
 
-    sLogger->trace("    - name: {}", name);
-    sLogger->trace("    - offset: {}", offset);
-    sLogger->trace("    - size: {}", size);
+    if (bindingKind == "uniform") {
+      uint32_t offset = bindingJson.value("offset", -1);
+      uint32_t size = bindingJson.value("size", -1);
+
+      if (isBinding) {
+        mBindingDescs.back().size =
+            std::max(mBindingDescs.back().size, offset + size);
+      }
+
+      sLogger->trace("    - name: {}", name);
+      sLogger->trace("    - offset: {}", offset);
+      sLogger->trace("    - size: {}", size);
+    }
   }
 
-  const auto &typeJson = varJson["type"];
+  const auto &typeJson = varJson.contains("type") ? varJson["type"] : varJson;
   std::string typeKind = typeJson.value("kind", "<unknown_kind>");
+
   sLogger->trace("    - kind: {}", typeKind);
 
+  // Process kind
   if (typeKind == "scalar") {
     std::string scalarType =
         typeJson.value("scalarType", "<uknown_scalar_type>");
 
     if (isNewBinding) {
-      mBindings.back().type = BindingType::eUniformBuffer;
+      mBindingDescs.back().type = BindingType::eUniformBuffer;
     }
 
     sLogger->trace("    - type: {}", scalarType);
@@ -572,7 +671,7 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
         elementTypeJson.value("scalarType", "<uknown_scalar_type>");
 
     if (isNewBinding) {
-      mBindings.back().type = BindingType::eUniformBuffer;
+      mBindingDescs.back().type = BindingType::eUniformBuffer;
     }
 
     sLogger->trace("    - type: {}x{}", scalarType, elementCount);
@@ -587,8 +686,8 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
         elementTypeJson.value("scalarType", "<uknown_scalar_type>");
 
     if (isNewBinding) {
-      mBindings.back().type = BindingType::eUniformBuffer;
-      mBindings.back().elementSize = rowCount * colCount * 4;
+      mBindingDescs.back().type = BindingType::eUniformBuffer;
+      mBindingDescs.back().elementSize = rowCount * colCount * 4;
     }
 
     sLogger->trace("    - type: mat{}x{} ({})", rowCount, colCount, scalarType);
@@ -604,11 +703,11 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
     if (elementKind == "struct") {
 
       if (isNewBinding) {
-        mBindings.back().type = BindingType::eUniformBuffer;
+        mBindingDescs.back().type = BindingType::eUniformBuffer;
       }
 
       for (const auto &fieldJson : elementTypeJson["fields"]) {
-        parseJsonRecursive(fieldJson, isNewBinding);
+        parseJsonRecursive(fieldJson, isNewBinding, offsets);
       }
     }
 
@@ -616,12 +715,12 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
 
       const auto &arrayElementType = elementTypeJson["elementType"];
       for (const auto &field : arrayElementType["fields"]) {
-        parseJsonRecursive(field, isNewBinding);
+        parseJsonRecursive(field, isNewBinding, offsets);
       }
 
       if (isNewBinding) {
-        mBindings.back().type = BindingType::eUniformBuffer;
-        mBindings.back().size *=
+        mBindingDescs.back().type = BindingType::eUniformBuffer;
+        mBindingDescs.back().size *=
             (uint32_t)elementTypeJson.value("elementCount", 0);
       }
     }
@@ -631,7 +730,15 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
 
   if (typeKind == "samplerState") {
     if (isNewBinding) {
-      mBindings.back().type = BindingType::eSampler;
+      mBindingDescs.back().type = BindingType::eSampler;
+    }
+
+    return;
+  }
+
+  if (typeKind == "struct") {
+    for (const auto &field : typeJson["fields"]) {
+      parseJsonRecursive(field, isBinding, offsets);
     }
 
     return;
@@ -642,25 +749,35 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
 
     if (isNewBinding) {
       if (baseShape == "structuredBuffer") {
-        mBindings.back().type = BindingType::eStorageBuffer;
+
+        mBindingDescs.back().type = BindingType::eStructuredBuffer;
+        if (typeJson.contains("access")) {
+          if (typeJson["access"] == "readWrite") {
+            mBindingDescs.back().type = BindingType::eRWStructuredBuffer;
+          }
+        }
+
         auto resultTypeJson = typeJson["resultType"];
 
         std::string resultTypeKind =
             resultTypeJson.value("kind", "<uknown_type_kind>");
 
-        if (resultTypeKind == "struct") {
+        if (resultTypeKind == "vector") {
+          parseJsonRecursive(resultTypeJson, true, offsets);
+        } else if (resultTypeKind == "struct") {
           auto resultTypeFields = resultTypeJson["fields"];
           for (const auto &field : resultTypeFields) {
-            parseJsonRecursive(field, true);
+            parseJsonRecursive(field, true, offsets);
           }
         } else {
-          sLogger->error("Only StructuredBuffer<StructType> is supported!");
+          sLogger->error("StructuredBuffer<{}> is not supported!",
+                         resultTypeKind);
           return;
         };
       }
 
       if (baseShape == "texture2D") {
-        mBindings.back().type = BindingType::eTexture2D;
+        mBindingDescs.back().type = BindingType::eTexture2D;
       }
     }
 
@@ -670,11 +787,14 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
 
   if (typeKind == "struct") {
     for (const auto &fieldJson : typeJson["fields"]) {
-      parseJsonRecursive(fieldJson, false);
+      parseJsonRecursive(fieldJson, false, offsets);
     }
+
+    return;
   }
 
-  sLogger->error("Cubozoa does not currently support {}!", typeKind);
+  sLogger->error("Cubozoa does not currently support '{}' for var {}!",
+                 typeKind, name);
 }
 
 Result ShaderWebGPU::create(const std::string &path) {
@@ -693,80 +813,130 @@ Result ShaderWebGPU::create(const std::string &path) {
   net::HttpResponse res =
       sShaderHttpClient->postJson("/compile", bodyJson.dump().c_str());
   nlohmann::json responseJson = nlohmann::json::parse(res.readAsCString());
-
   // Parse uniforms
   nlohmann::json json = responseJson["reflection"];
   for (const auto &paramJson : json["parameters"]) {
-    parseJsonRecursive(paramJson, -1);
+    parseJsonRecursive(paramJson, false, 0);
   }
 
   // Vertex Input scope
   for (const auto &entryPoint : json["entryPoints"]) {
-    if (entryPoint.value("stage", "") != "fragment") {
+    if (entryPoint.value("stage", "") == "fragment") {
       mStages |= WGPUShaderStage_Fragment;
     }
 
-    if (entryPoint.value("stage", "") != "compute") {
+    if (entryPoint.value("stage", "") == "compute") {
       mStages |= WGPUShaderStage_Compute;
     }
 
-    if (entryPoint.value("stage", "") != "vertex") {
-      continue;
-    }
-    mStages |= WGPUShaderStage_Vertex;
+    if (entryPoint.value("stage", "") == "vertex") {
+      mStages |= WGPUShaderStage_Vertex;
 
-    mVertexLayout.begin(VertexStepMode::eVertex);
-    for (const auto &param : entryPoint["parameters"]) {
-      auto fields = param["type"]["fields"];
-      for (const auto &field : fields) {
-        // Skipped built in
-        std::string semanticName = field.value("semanticName", "");
-        if (semanticName == "SV_VULKANINSTANCEID") {
-          continue;
+      mVertexLayout.begin(VertexStepMode::eVertex);
+      for (const auto &param : entryPoint["parameters"]) {
+        auto fields = param["type"]["fields"];
+        for (const auto &field : fields) {
+          // Skipped built in
+          std::string semanticName = field.value("semanticName", "");
+          if (semanticName == "SV_VULKANINSTANCEID") {
+            continue;
+          }
+
+          std::string name = field.value("name", "");
+          auto binding = field["binding"];
+          int location = binding.value("index", -1);
+          int components = field["type"].value("elementCount", 1);
+          std::string scalarType =
+              field["type"]["elementType"].value("scalarType", "");
+
+          sLogger->trace("Vertex Attribute: location={}, name={}, type={}x{}\n",
+                         location, name, scalarType, components);
+
+          VertexAttributeType attribute =
+              static_cast<VertexAttributeType>(location);
+
+          VertexFormat format = VertexFormat::eCount;
+
+          if (scalarType == "float32") {
+            format = static_cast<VertexFormat>(
+                static_cast<uint32_t>(VertexFormat::eFloat32) + components - 1);
+          }
+
+          if (scalarType == "uint32") {
+            format = static_cast<VertexFormat>(
+                static_cast<uint32_t>(VertexFormat::eUint32) + components - 1);
+          }
+          if (scalarType == "sint32") {
+            format = static_cast<VertexFormat>(
+                static_cast<uint32_t>(VertexFormat::eSint32) + components - 1);
+          }
+
+          if (format == VertexFormat::eCount) {
+            sLogger->error(
+                "Failed to parse vertex entry attributes. Uknown format {}x{}",
+                scalarType, components);
+            return Result::eFailure;
+          }
+
+          mVertexLayout.push_attribute(attribute, format);
         }
-
-        std::string name = field.value("name", "");
-        auto binding = field["binding"];
-        int location = binding.value("index", -1);
-        int components = field["type"].value("elementCount", 1);
-        std::string scalarType =
-            field["type"]["elementType"].value("scalarType", "");
-
-        sLogger->trace("Vertex Attribute: location={}, name={}, type={}x{}\n",
-                       location, name, scalarType, components);
-
-        VertexAttributeType attribute =
-            static_cast<VertexAttributeType>(location);
-
-        VertexFormat format = VertexFormat::eCount;
-
-        if (scalarType == "float32") {
-          format = static_cast<VertexFormat>(
-              static_cast<uint32_t>(VertexFormat::eFloat32) + components - 1);
-        }
-
-        if (scalarType == "uint32") {
-          format = static_cast<VertexFormat>(
-              static_cast<uint32_t>(VertexFormat::eUint32) + components - 1);
-        }
-        if (scalarType == "sint32") {
-          format = static_cast<VertexFormat>(
-              static_cast<uint32_t>(VertexFormat::eSint32) + components - 1);
-        }
-
-        if (format == VertexFormat::eCount) {
-          sLogger->error(
-              "Failed to parse vertex entry attributes. Uknown format {}x{}",
-              scalarType, components);
-          return Result::eFailure;
-        }
-
-        mVertexLayout.push_attribute(attribute, format);
       }
+      mVertexLayout.end();
     }
-    mVertexLayout.end();
-    break;
   }
+
+  std::vector<WGPUBindGroupLayoutEntry> bindingEntries(getBindings().size());
+
+  for (size_t i = 0; i < bindingEntries.size(); i++) {
+    bindingEntries[i] = {};
+    bindingEntries[i].binding = mBindingDescs[i].index;
+    bindingEntries[i].visibility = getShaderStages();
+
+    switch (getBindings()[i].type) {
+    case BindingType::eUniformBuffer:
+      bindingEntries[i].buffer.type = WGPUBufferBindingType_Uniform;
+      bindingEntries[i].buffer.nextInChain = nullptr;
+      bindingEntries[i].buffer.hasDynamicOffset = false;
+      bindingEntries[i].buffer.minBindingSize = getBindings()[i].size;
+      break;
+
+    case BindingType::eRWStructuredBuffer:
+    case BindingType::eStructuredBuffer:
+      bindingEntries[i].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+      if (mBindingDescs[i].type == BindingType::eRWStructuredBuffer) {
+        bindingEntries[i].buffer.type = WGPUBufferBindingType_Storage;
+      }
+
+      bindingEntries[i].buffer.nextInChain = nullptr;
+      bindingEntries[i].buffer.hasDynamicOffset = false;
+      break;
+
+    case BindingType::eSampler:
+      bindingEntries[i].sampler.nextInChain = nullptr;
+      bindingEntries[i].sampler.type = WGPUSamplerBindingType_Filtering;
+      break;
+
+    case BindingType::eTexture2D:
+      bindingEntries[i].texture.nextInChain = nullptr;
+      bindingEntries[i].texture.sampleType = WGPUTextureSampleType_Float;
+      bindingEntries[i].texture.viewDimension = WGPUTextureViewDimension_2D;
+      break;
+
+    case BindingType::eNone:
+      sLogger->error("Unsupported binding type {}",
+                     (uint32_t)getBindings()[i].type);
+      break;
+    }
+  }
+
+  WGPUBindGroupLayoutDescriptor bindGroupLayoutDesc = {};
+  bindGroupLayoutDesc.nextInChain = nullptr;
+  bindGroupLayoutDesc.label = "";
+  bindGroupLayoutDesc.entryCount = static_cast<uint32_t>(bindingEntries.size());
+  bindGroupLayoutDesc.entries = bindingEntries.data();
+
+  mBindGroupLayout =
+      wgpuDeviceCreateBindGroupLayout(sDevice, &bindGroupLayoutDesc);
 
   WGPUShaderModuleDescriptor shaderModuleDesc{};
 
@@ -785,94 +955,47 @@ Result ShaderWebGPU::create(const std::string &path) {
 #endif
 
   mModule = wgpuDeviceCreateShaderModule(sDevice, &shaderModuleDesc);
+  if (!mModule) {
+    return Result::eFailure;
+  }
 
   return Result::eSuccess;
 }
 
 void ShaderWebGPU::destroy() { wgpuShaderModuleRelease(mModule); }
 
-Result GraphicsProgramWebGPU::create(const ShaderWebGPU *shader,
-                                     VertexLayout *requestedVertexLayout,
-                                     const std::string &name) {
-  if (!shader) {
-    spdlog::error("Attempting to create graphics pipeline with null shader!");
-    return Result::eWGPUError;
-  }
-  mShader = shader;
+Result GraphicsProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
+  mShaderHandle = sh;
+
+  const ShaderWebGPU *shader = &mShaders[sh.idx];
 
   WGPURenderPipelineDescriptor pipelineDesc = {};
   pipelineDesc.nextInChain = nullptr;
   pipelineDesc.label = name.c_str();
-
-  std::vector<WGPUBindGroupLayoutEntry> bindingEntries(
-      mShader->getBindings().size());
-
-  for (size_t i = 0; i < bindingEntries.size(); i++) {
-    bindingEntries[i] = {};
-    bindingEntries[i].binding = i;
-    bindingEntries[i].visibility = mShader->getShaderStages();
-    switch (mShader->getBindings()[i].type) {
-    case BindingType::eUniformBuffer:
-      bindingEntries[i].buffer.type = WGPUBufferBindingType_Uniform;
-      bindingEntries[i].buffer.nextInChain = nullptr;
-      bindingEntries[i].buffer.hasDynamicOffset = false;
-      bindingEntries[i].buffer.minBindingSize = mShader->getBindings()[i].size;
-      break;
-    case BindingType::eStorageBuffer:
-      bindingEntries[i].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
-      bindingEntries[i].buffer.nextInChain = nullptr;
-      bindingEntries[i].buffer.hasDynamicOffset = false;
-      break;
-    case BindingType::eSampler:
-      bindingEntries[i].sampler.nextInChain = nullptr;
-      bindingEntries[i].sampler.type = WGPUSamplerBindingType_Filtering;
-      break;
-    case BindingType::eTexture2D:
-      bindingEntries[i].texture.nextInChain = nullptr;
-      bindingEntries[i].texture.sampleType = WGPUTextureSampleType_Float;
-      bindingEntries[i].texture.viewDimension = WGPUTextureViewDimension_2D;
-      break;
-    case BindingType::eNone:
-      sLogger->error("Unsupported binding type {}",
-                     (uint32_t)mShader->getBindings()[i].type);
-      break;
-    }
-  }
-
-  WGPUBindGroupLayoutDescriptor bindGroupLayoutDesc = {};
-  bindGroupLayoutDesc.nextInChain = nullptr;
-  bindGroupLayoutDesc.label = "";
-  bindGroupLayoutDesc.entryCount = static_cast<uint32_t>(bindingEntries.size());
-  bindGroupLayoutDesc.entries = bindingEntries.data();
-  mBindGroupLayout =
-      wgpuDeviceCreateBindGroupLayout(sDevice, &bindGroupLayoutDesc);
 
   std::string layoutName = std::string(name) + std::string("_layout");
   WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
   pipelineLayoutDesc.nextInChain = nullptr;
   pipelineLayoutDesc.label = layoutName.c_str();
   pipelineLayoutDesc.bindGroupLayoutCount = 1;
-  pipelineLayoutDesc.bindGroupLayouts = &mBindGroupLayout;
+  pipelineLayoutDesc.bindGroupLayouts = &shader->getBindGroupLayout();
   mPipelineLayout =
       wgpuDeviceCreatePipelineLayout(sDevice, &pipelineLayoutDesc);
   pipelineDesc.layout = mPipelineLayout;
 
-  if (requestedVertexLayout) {
-  }
-
   WGPUVertexBufferLayout vertexBufferLayout = {};
-  vertexBufferLayout.arrayStride = mShader->getVertexLayout().stride;
+  vertexBufferLayout.arrayStride = shader->getVertexLayout().stride;
   vertexBufferLayout.stepMode =
-      static_cast<WGPUVertexStepMode>(mShader->getVertexLayout().stepMode);
+      static_cast<WGPUVertexStepMode>(shader->getVertexLayout().stepMode);
   vertexBufferLayout.attributeCount =
-      mShader->getVertexLayout().attributes.size();
+      shader->getVertexLayout().attributes.size();
   vertexBufferLayout.attributes =
-      (WGPUVertexAttribute const *)(mShader->getVertexLayout()
+      (WGPUVertexAttribute const *)(shader->getVertexLayout()
                                         .attributes.data());
 
   WGPUVertexState vertexState = {};
   vertexState.nextInChain = nullptr;
-  vertexState.module = mShader->getModule();
+  vertexState.module = shader->getModule();
   vertexState.entryPoint = "vertexMain";
   vertexState.constantCount = 0;
   vertexState.constants = nullptr;
@@ -919,7 +1042,7 @@ Result GraphicsProgramWebGPU::create(const ShaderWebGPU *shader,
 
   WGPUFragmentState fragmentState = {};
   fragmentState.nextInChain = nullptr;
-  if ((mShader->getShaderStages() & WGPUShaderStage_Fragment) ==
+  if ((shader->getShaderStages() & WGPUShaderStage_Fragment) ==
       WGPUShaderStage_Fragment) {
     fragmentState.entryPoint = "fragmentMain";
     fragmentState.constantCount = 0;
@@ -927,7 +1050,7 @@ Result GraphicsProgramWebGPU::create(const ShaderWebGPU *shader,
 
     fragmentState.targetCount = 1;
     fragmentState.targets = &targetState;
-    fragmentState.module = mShader->getModule();
+    fragmentState.module = shader->getModule();
     pipelineDesc.fragment = &fragmentState;
   } else {
     pipelineDesc.fragment = nullptr;
@@ -956,6 +1079,56 @@ void GraphicsProgramWebGPU::destroy() {
   wgpuRenderPipelineRelease(mPipeline);
 }
 
+Result ComputeProgramWebGPU::create(const ShaderWebGPU *shader,
+                                    const std::string &name) {
+  if (!shader) {
+    spdlog::error("Attempting to create graphics pipeline with null shader!");
+    return Result::eWGPUError;
+  }
+
+  mShader = shader;
+
+  WGPUComputePipelineDescriptor pipelineDesc = {};
+  pipelineDesc.nextInChain = nullptr;
+  pipelineDesc.label = name.c_str();
+
+  pipelineDesc.compute.module = shader->getModule();
+  pipelineDesc.compute.entryPoint = "computeMain";
+
+  std::string layoutName = std::string(name) + std::string("_layout");
+  WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
+  pipelineLayoutDesc.nextInChain = nullptr;
+  pipelineLayoutDesc.label = layoutName.c_str();
+  pipelineLayoutDesc.bindGroupLayoutCount = 1;
+  pipelineLayoutDesc.bindGroupLayouts = &shader->getBindGroupLayout();
+
+  mPipelineLayout =
+      wgpuDeviceCreatePipelineLayout(sDevice, &pipelineLayoutDesc);
+  pipelineDesc.layout = mPipelineLayout;
+
+  mPipeline = wgpuDeviceCreateComputePipeline(sDevice, &pipelineDesc);
+  return Result::eSuccess;
+}
+
+Result
+ComputeProgramWebGPU::bind(WGPUComputePassEncoder renderPassEncoder) const {
+  wgpuComputePassEncoderSetPipeline(renderPassEncoder, mPipeline);
+  return Result::eSuccess;
+}
+
+void ComputeProgramWebGPU::destroy() {
+  if (!mPipeline) {
+    sLogger->warn("Attempting to destroy invalid graphics program!");
+    return;
+  }
+
+  if (mPipelineLayout) {
+    wgpuPipelineLayoutRelease(mPipelineLayout);
+  }
+
+  wgpuComputePipelineRelease(mPipeline);
+}
+
 Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   sLogger = spdlog::stdout_color_mt("wgpu");
   sLogger->set_level(spdlog::level::trace);
@@ -968,8 +1141,10 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
 
   sShaderHttpClient = net::httpClientCreate(cbzEndPoint);
   if (!sShaderHttpClient) {
+    sLogger->error("Failed to connect to shader compilation sever!)");
     return Result::eFailure;
   }
+
   sLogger->info("Shader compiler backend connected ({}:{})",
                 cbzEndPoint.address.c_str(), cbzEndPoint.port.c_str());
 
@@ -1147,8 +1322,10 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
 
 static double lastTime = glfwGetTime();
 static double deltaTime = 0.0f;
-void RendererContextWebGPU::drawSorted(
-    const std::vector<RenderCommand> &sortedDraws) {
+
+uint32_t frameCounter = 0;
+void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
+                                         uint32_t count) {
   deltaTime = glfwGetTime() - lastTime;
   lastTime = glfwGetTime();
 
@@ -1218,161 +1395,73 @@ void RendererContextWebGPU::drawSorted(
   bool drawIndexed = false;
   uint32_t indexCount = 0;
 
-  for (const RenderCommand &renderCmd : sortedDraws) {
+  for (uint32_t cmdIdx = 0; cmdIdx < count; cmdIdx++) {
+    const ShaderProgramCommand &renderCmd = sortedCmds[cmdIdx];
+
     if (lastRenderCommandID != renderCmd.sortKey) {
       lastRenderCommandID = renderCmd.sortKey;
-      if (mGraphicsPrograms[renderCmd.gph.idx].getShader()->getVertexLayout() !=
-          mVertexBuffers[renderCmd.vbh.idx].getVertexLayout()) {
-        sLogger->warn("Incompatible vertex buffer and program layout!");
-        sLogger->warn("Discarding draw...");
-        continue;
-      }
 
-      const GraphicsProgramWebGPU &graphicsProgram =
-          mGraphicsPrograms[renderCmd.gph.idx];
+      switch (renderCmd.programType) {
+      case ProgramType::eGraphics: {
+        const GraphicsProgramWebGPU &graphicsProgram =
+            mGraphicsPrograms[renderCmd.program.graphics.ph.idx];
 
-      if (graphicsProgram.bind(renderPassEncoder) != Result::eSuccess) {
-        continue;
-      }
+        const VertexBufferWebGPU &vb =
+            mVertexBuffers[renderCmd.program.graphics.vbh.idx];
 
-      // Find/Create and set bindingGroup
-      if (mBindingGroups.find(renderCmd.getDescriptorHash()) ==
-          mBindingGroups.end()) {
-
-        WGPUBindGroupDescriptor bindGroupDesc = {};
-        bindGroupDesc.nextInChain = nullptr;
-        bindGroupDesc.label = nullptr;
-        bindGroupDesc.layout =
-            mGraphicsPrograms[renderCmd.gph.idx].getBindGroupLayout();
-
-        std::vector<WGPUBindGroupEntry> bindGroupEntries(
-            renderCmd.uniformCount);
-
-        const std::vector<Binding> &shaderBindings =
-            graphicsProgram.getShader()->getBindings();
-
-        for (uint32_t uIdx = 0; uIdx < renderCmd.uniformCount; uIdx++) {
-          bindGroupEntries[uIdx].binding = uIdx;
-
-          switch (renderCmd.uniforms[uIdx].type) {
-          case UniformType::eVec4:
-          case UniformType::eMat4: {
-            UniformHandle uh = renderCmd.uniforms[uIdx].uniformBuffer.handle;
-            const auto &it = std::find_if(
-                shaderBindings.begin(), shaderBindings.end(),
-                [=](const Binding &binding) {
-                  return binding.name ==
-                         HandleProvider<UniformHandle>::getName(uh);
-                });
-
-            if (it == shaderBindings.end()) {
-              sLogger->error(
-                  "Program {} has no uniform binding named {}",
-                  HandleProvider<GraphicsProgramHandle>::getName(renderCmd.gph),
-                  HandleProvider<UniformHandle>::getName(uh));
-              continue;
-            }
-
-            bindGroupEntries[uIdx] =
-                mUniformBuffers[uh.idx].createBindGroupEntry(uIdx);
-          } break;
-          case UniformType::eTexture2D: {
-            TextureHandle th = renderCmd.uniforms[uIdx].texture.handle;
-
-            const auto &it = std::find_if(
-                shaderBindings.begin(), shaderBindings.end(),
-                [=](const Binding &binding) {
-                  return binding.name ==
-                         HandleProvider<TextureHandle>::getName(th);
-                });
-
-            if (it->type != BindingType::eTexture2D) {
-              sLogger->error(
-                  "Program {} has uniform binding and type mismatch for '{}'",
-                  HandleProvider<GraphicsProgramHandle>::getName(renderCmd.gph),
-                  HandleProvider<TextureHandle>::getName(th));
-              continue;
-            }
-
-            if (it == shaderBindings.end()) {
-              sLogger->error(
-                  "Program {} has no uniform binding named {}",
-                  HandleProvider<GraphicsProgramHandle>::getName(renderCmd.gph),
-                  HandleProvider<TextureHandle>::getName(th));
-              continue;
-            }
-
-            bindGroupEntries[uIdx] =
-                mTextures[th.idx].createBindGroupEntry(uIdx);
-          } break;
-          case UniformType::eSampler: {
-            SamplerHandle sh = renderCmd.uniforms[uIdx].texture.samplerHandle;
-
-            const auto &it =
-                std::find_if(shaderBindings.begin(), shaderBindings.end(),
-                             [=](const Binding &binding) {
-                               return binding.name == "albedoSampler";
-                             });
-
-            if (it->type != BindingType::eSampler) {
-              sLogger->error(
-                  "Program {} has uniform binding and type mismatch for",
-                  HandleProvider<GraphicsProgramHandle>::getName(
-                      renderCmd.gph));
-              continue;
-            }
-
-            if (it == shaderBindings.end()) {
-              sLogger->error(
-                  "Program {} has no uniform binding named {}",
-                  HandleProvider<GraphicsProgramHandle>::getName(renderCmd.gph),
-                  "albedoSampler");
-              continue;
-            }
-
-            WGPUBindGroupEntry entry = {};
-            entry.binding = uIdx;
-            entry.nextInChain = nullptr;
-            entry.sampler = mSamplers[sh.idx];
-            bindGroupEntries[uIdx] = entry;
-          } break;
-          default:
-            break;
-          }
+        if (mShaders[graphicsProgram.getShader().idx].getVertexLayout() !=
+            vb.getVertexLayout()) {
+          sLogger->warn("Incompatible vertex buffer and program layout for {}!",
+                        HandleProvider<GraphicsProgramHandle>::getName(
+                            renderCmd.program.graphics.ph));
+          sLogger->warn("Discarding draw...");
+          continue;
         }
 
-        bindGroupDesc.entryCount = renderCmd.uniformCount;
-        bindGroupDesc.entries = bindGroupEntries.data();
+        if (graphicsProgram.bind(renderPassEncoder) != Result::eSuccess) {
+          continue;
+        }
 
-        mBindingGroups[renderCmd.getDescriptorHash()] =
-            wgpuDeviceCreateBindGroup(sDevice, &bindGroupDesc);
-      }
+        const WGPUBindGroup graphicsBindGroup = FindOrCreateBindGroup(
+            &mShaders[graphicsProgram.getShader().idx],
+            renderCmd.bindings.data(),
+            static_cast<uint32_t>(renderCmd.bindings.size()));
 
-      uint32_t offsets = 0;
-      wgpuRenderPassEncoderSetBindGroup(
-          renderPassEncoder, 0, mBindingGroups[renderCmd.getDescriptorHash()],
-          0, &offsets);
+        if (graphicsBindGroup) {
+          uint32_t offsets = 0;
+          wgpuRenderPassEncoderSetBindGroup(renderPassEncoder, 0,
+                                            graphicsBindGroup, 0, &offsets);
+        }
 
-      if (renderCmd.vbh.idx != CBZ_INVALID_HANDLE) {
-        if (mVertexBuffers[renderCmd.vbh.idx].bind(renderPassEncoder) !=
-            Result::eSuccess) {
+        if (vb.bind(renderPassEncoder) != Result::eSuccess) {
           continue;
         };
-        vertexCount = mVertexBuffers[renderCmd.vbh.idx].getVertexCount();
-      }
 
-      if (renderCmd.ibh.idx != CBZ_INVALID_HANDLE) {
-        if (mIndexBuffers[renderCmd.ibh.idx].bind(renderPassEncoder) !=
-            Result::eSuccess) {
-          continue;
+        vertexCount = vb.getVertexCount();
+
+        if (renderCmd.program.graphics.ibh.idx != CBZ_INVALID_HANDLE) {
+          const IndexBufferWebGPU &ib =
+              mIndexBuffers[renderCmd.program.graphics.ibh.idx];
+
+          if (ib.bind(renderPassEncoder) != Result::eSuccess) {
+            continue;
+          }
+
+          indexCount = ib.getIndexCount();
+          drawIndexed = true;
+        } else {
+          indexCount = 0;
+          drawIndexed = false;
         }
 
-        indexCount = mIndexBuffers[renderCmd.ibh.idx].getIndexCount();
-        drawIndexed = true;
-      } else {
-        indexCount = 0;
-        drawIndexed = false;
-      }
+      } break;
+
+      case ProgramType::eCompute: {
+      } break;
+
+      case ProgramType::eNone:
+        break;
+      };
     }
 
     if (drawIndexed) {
@@ -1402,9 +1491,54 @@ void RendererContextWebGPU::drawSorted(
   wgpuRenderPassEncoderEnd(renderPassEncoder);
   wgpuRenderPassEncoderRelease(renderPassEncoder);
 
+  // WGPUComputePassDescriptor computePassDesc = {};
+  // computePassDesc.nextInChain = nullptr;
+  // computePassDesc.label = "computePassX";
+  // computePassDesc.timestampWrites = nullptr;
+  //
+  // WGPUComputePassEncoder computePassEncoder =
+  //     wgpuCommandEncoderBeginComputePass(cmdEncoder, &computePassDesc);
+
+  // // TODO: Remove
+  // Binding bufferABinding = {};
+  //
+  // bufferABinding.type = BindingType::eStructuredBuffer;
+  // bufferABinding.value.storageBuffer.valueType = UniformType::eVec4;
+  // bufferABinding.value.storageBuffer.handle = {0};
+  //
+  // Binding computeUniforms[1]{bufferABinding};
+  //
+  // for (int i = 0; i < 1; i++) {
+  //   const ComputeProgramWebGPU &computeProgram = mComputePrograms[0];
+  //
+  //   if (computeProgram.bind(computePassEncoder) != Result::eSuccess) {
+  //     continue;
+  //   }
+  //
+  //   const WGPUBindGroup computeBindGroup =
+  //       FindOrCreateBindGroup(computeProgram.getShader(), computeUniforms,
+  //       1);
+  //
+  //   if (!computeBindGroup) {
+  //     sLogger->warn("Attempting to run compute pipeline without bindings!");
+  //     continue;
+  //   }
+  //
+  //   uint32_t offsets = 0;
+  //   wgpuComputePassEncoderSetBindGroup(computePassEncoder, 0,
+  //   computeBindGroup,
+  //                                      0, &offsets);
+  //
+  //   wgpuComputePassEncoderDispatchWorkgroups(computePassEncoder, 1, 1, 1);
+  // }
+
+  // wgpuComputePassEncoderEnd(computePassEncoder);
+  // wgpuComputePassEncoderRelease(computePassEncoder);
+
   WGPUCommandBufferDescriptor cmdDesc = {};
   cmdDesc.nextInChain = nullptr;
   cmdDesc.label = "CommandBufferX";
+
   WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(cmdEncoder, &cmdDesc);
   wgpuCommandEncoderRelease(cmdEncoder);
 
@@ -1419,6 +1553,7 @@ void RendererContextWebGPU::drawSorted(
   wgpuTextureViewRelease(surfaceTextureView);
 
   PollEvents(false);
+  frameCounter++;
 }
 
 Result
@@ -1471,6 +1606,23 @@ void RendererContextWebGPU::uniformBufferUpdate(UniformHandle uh, void *data,
 
 void RendererContextWebGPU::uniformBufferDestroy(UniformHandle uh) {
   return mUniformBuffers[uh.idx].destroy();
+}
+
+Result RendererContextWebGPU::structuredBufferCreate(StructuredBufferHandle sbh,
+                                                     UniformType type,
+                                                     uint16_t num,
+                                                     const void *data) {
+  if (mStorageBuffers.size() < sbh.idx + 1) {
+    mStorageBuffers.resize(sbh.idx + 1);
+  }
+
+  return mStorageBuffers[sbh.idx].create(
+      type, num, data, HandleProvider<StructuredBufferHandle>::getName(sbh));
+};
+
+void RendererContextWebGPU::structuredBufferDestroy(
+    StructuredBufferHandle sbh) {
+  return mUniformBuffers[sbh.idx].destroy();
 }
 
 SamplerHandle
@@ -1546,11 +1698,25 @@ Result RendererContextWebGPU::graphicsProgramCreate(GraphicsProgramHandle gph,
     mGraphicsPrograms.resize(gph.idx + 1);
   }
 
-  return mGraphicsPrograms[gph.idx].create(&mShaders[sh.idx]);
+  return mGraphicsPrograms[gph.idx].create(
+      sh, HandleProvider<GraphicsProgramHandle>::getName(gph));
 }
 
 void RendererContextWebGPU::graphicsProgramDestroy(GraphicsProgramHandle gph) {
   return mGraphicsPrograms[gph.idx].destroy();
+}
+
+Result RendererContextWebGPU::computeProgramCreate(ComputeProgramHandle cph,
+                                                   ShaderHandle sh) {
+  if (mComputePrograms.size() < cph.idx + 1) {
+    mComputePrograms.resize(cph.idx + 1);
+  }
+
+  return mComputePrograms[cph.idx].create(&mShaders[sh.idx]);
+}
+
+void RendererContextWebGPU::computeProgramDestroy(ComputeProgramHandle cph) {
+  return mComputePrograms[cph.idx].destroy();
 }
 
 void RendererContextWebGPU::shutdown() {
@@ -1559,6 +1725,163 @@ void RendererContextWebGPU::shutdown() {
 
   wgpuSurfaceRelease(sSurface);
   wgpuDeviceRelease(sDevice);
+}
+
+WGPUBindGroup
+RendererContextWebGPU::FindOrCreateBindGroup(const ShaderWebGPU *shader,
+                                             const Binding *bindings,
+                                             uint32_t bindingCount) {
+  if (!bindingCount || !bindings) {
+    return nullptr;
+  }
+
+  const uint32_t descriptorHash = 1;
+  const std::vector<BindingDesc> &shaderBindingDescs = shader->getBindings();
+
+  if (mBindingGroups.find(descriptorHash) == mBindingGroups.end()) {
+
+    WGPUBindGroupDescriptor bindGroupDesc = {};
+    bindGroupDesc.nextInChain = nullptr;
+    bindGroupDesc.label = nullptr;
+    bindGroupDesc.layout = shader->getBindGroupLayout();
+
+    std::vector<WGPUBindGroupEntry> bindGroupEntries(bindingCount);
+
+    for (uint32_t i = 0; i < static_cast<uint32_t>(shaderBindingDescs.size());
+         i++) {
+      const BindingDesc *bindingDesc = &shaderBindingDescs[i];
+
+      switch (bindings[i].type) {
+      case BindingType::eUniformBuffer: {
+        switch (bindings[i].value.uniformBuffer.valueType) {
+        case UniformType::eVec4:
+        case UniformType::eMat4: {
+          UniformHandle uh = bindings[i].value.uniformBuffer.handle;
+
+          const auto &it =
+              std::find_if(shaderBindingDescs.begin(), shaderBindingDescs.end(),
+                           [=](const BindingDesc &bindingDesc) {
+                             return bindingDesc.name ==
+                                    HandleProvider<UniformHandle>::getName(uh);
+                           });
+
+          if (it == shaderBindingDescs.end()) {
+            sLogger->error("Bound program has no uniform binding named {}",
+                           HandleProvider<UniformHandle>::getName(uh));
+            return nullptr;
+          }
+
+          bindGroupEntries[i] =
+              mUniformBuffers[uh.idx].createBindGroupEntry(bindingDesc->index);
+        } break;
+
+        default:
+          sLogger->error("Unsupported uniform buffer ShaderValueType!");
+          break;
+        }
+      } break;
+
+      case BindingType::eRWStructuredBuffer:
+      case BindingType::eStructuredBuffer: {
+        switch (bindings[i].value.storageBuffer.valueType) {
+        case UniformType::eVec4:
+        case UniformType::eMat4: {
+          StructuredBufferHandle sbh = bindings[i].value.storageBuffer.handle;
+
+          const auto &it =
+              std::find_if(shaderBindingDescs.begin(), shaderBindingDescs.end(),
+                           [&](const BindingDesc &bindingDesc) {
+                             return bindingDesc.index ==
+                                    bindings[i].value.storageBuffer.slot;
+                           });
+
+          if (it == shaderBindingDescs.end()) {
+            sLogger->error(
+                "Bound program has no storage binding named {}",
+                !HandleProvider<StructuredBufferHandle>::getName(sbh).empty()
+                    ? HandleProvider<StructuredBufferHandle>::getName(sbh)
+                    : "'<unnamed>'");
+            return nullptr;
+          }
+
+          bindGroupEntries[i] =
+              mStorageBuffers[sbh.idx].createBindGroupEntry(bindingDesc->index);
+        } break;
+
+        default:
+          sLogger->error("Unsupported storage buffer ShaderValueType!");
+          break;
+        }
+      } break;
+
+      case BindingType::eTexture2D: {
+        TextureHandle th = bindings[i].value.texture.handle;
+
+        const auto &it = std::find_if(
+            shaderBindingDescs.begin(), shaderBindingDescs.end(),
+            [=](const BindingDesc &bindingDesc) {
+              return bindingDesc.index == bindings[i].value.texture.slot;
+            });
+
+        if (it->type != BindingType::eTexture2D) {
+          sLogger->error(
+              "Bound program has uniform binding and type mismatch for '{}'",
+              HandleProvider<TextureHandle>::getName(th));
+          return nullptr;
+        }
+
+        if (it == shaderBindingDescs.end()) {
+          sLogger->error("Bound program has no uniform binding named {}",
+                         HandleProvider<TextureHandle>::getName(th));
+          return nullptr;
+        }
+
+        bindGroupEntries[i] =
+            mTextures[th.idx].createBindGroupEntry(bindingDesc->index);
+      } break;
+
+      case BindingType::eSampler: {
+        SamplerHandle sh = bindings[i].value.sampler.handle;
+
+        const auto &it = std::find_if(
+            shaderBindingDescs.begin(), shaderBindingDescs.end(),
+            [=](const BindingDesc &bindingDesc) {
+              return bindingDesc.index == bindings[i].value.texture.slot;
+            });
+
+        if (it->type != BindingType::eSampler) {
+          sLogger->error("Bound program has uniform binding and type mismatch "
+                         "for sampler!");
+          return nullptr;
+        }
+
+        if (it == shaderBindingDescs.end()) {
+          sLogger->error("Bound program has no uniform binding named {}",
+                         "albedoSampler"); // TODO: Change to name of sampler.
+          return nullptr;
+        }
+
+        WGPUBindGroupEntry entry = {};
+        entry.binding = bindingDesc->index;
+        entry.nextInChain = nullptr;
+        entry.sampler = mSamplers[sh.idx];
+        bindGroupEntries[i] = entry;
+      } break;
+
+      case BindingType::eNone:
+        sLogger->error("Uknown and unsupported binding!");
+        break;
+      }
+    }
+
+    bindGroupDesc.entryCount = bindingCount;
+    bindGroupDesc.entries = bindGroupEntries.data();
+
+    return mBindingGroups[descriptorHash] =
+               wgpuDeviceCreateBindGroup(sDevice, &bindGroupDesc);
+  }
+
+  return mBindingGroups[descriptorHash];
 }
 
 } // namespace cbz

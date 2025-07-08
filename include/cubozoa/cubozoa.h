@@ -16,56 +16,75 @@ CBZ_API struct InitDesc {
 CBZ_API Result init(InitDesc initDesc);
 
 [[nodiscard]] CBZ_API VertexBufferHandle
-vertexBufferCreate(const VertexLayout &vertexLayout, uint32_t count,
+VertexBufferCreate(const VertexLayout &vertexLayout, uint32_t num,
                    const void *data = nullptr, const std::string &name = "");
 
-CBZ_API void vertexBufferDestroy(VertexBufferHandle vbh);
+CBZ_API void VertexBufferSet(VertexBufferHandle vbh);
+
+CBZ_API void VertexBufferDestroy(VertexBufferHandle vbh);
 
 [[nodiscard]] CBZ_API IndexBufferHandle
-indexBufferCreate(IndexFormat format, uint32_t count,
-                  const void *data = nullptr, const std::string &name = "");
+IndexBufferCreate(IndexFormat format, uint32_t num, const void *data = nullptr,
+                  const std::string &name = "");
 
-CBZ_API void indexBufferDestroy(IndexBufferHandle ibh);
+CBZ_API void IndexBufferSet(IndexBufferHandle ibh);
 
-[[nodiscard]] CBZ_API UniformHandle uniformCreate(const std::string &name,
+CBZ_API void IndexBufferDestroy(IndexBufferHandle ibh);
+
+[[nodiscard]] CBZ_API StructuredBufferHandle
+StructuredBufferCreate(UniformType type, uint32_t num,
+                       const void *data = nullptr, const std::string &name = "");
+
+CBZ_API void StructuredBufferSet(BufferSlot slot, StructuredBufferHandle sbh);
+
+CBZ_API void StructuredBufferDestroy(StructuredBufferHandle ibh);
+
+/// @brief Creates a uniform.
+/// @note The uniform name must match the name used in the shader exactly.
+/// mapping).
+[[nodiscard]] CBZ_API UniformHandle UniformCreate(const std::string &name,
                                                   UniformType type,
                                                   uint16_t num = 1);
 
-CBZ_API void uniformBind(UniformHandle uh, void *data, uint16_t num = 1);
+/// @brief Updates a uniform.
+/// @note If buffer and num are 0, the entire uniform range is updated.
+CBZ_API void UniformSet(UniformHandle uh, void *data, uint16_t num = 0);
 
-CBZ_API void uniformDestroy(UniformHandle uh);
+/// @brief Destroys a uniform.
+CBZ_API void UniformDestroy(UniformHandle uh);
 
-[[nodiscard]] CBZ_API TextureHandle texture2DCreate(
+[[nodiscard]] CBZ_API TextureHandle Texture2DCreate(
     TextureFormat format, uint32_t w, uint32_t h, const std::string &name = "");
 
-CBZ_API void texture2DUpdate(TextureHandle th, void *data, uint32_t count);
+CBZ_API void Texture2DUpdate(TextureHandle th, void *data, uint32_t count);
 
-CBZ_API void textureBind(uint16_t slot, TextureHandle th,
-                         UniformHandle samplerUH, TextureBindingDesc desc = {});
+CBZ_API void TextureSet(TextureSlot slot, TextureHandle th,
+                        TextureBindingDesc desc = {});
 
-void textureDestroy(TextureHandle th);
+void TextureDestroy(TextureHandle th);
 
-[[nodiscard]] CBZ_API ShaderHandle shaderCreate(const std::string &moduleName,
+[[nodiscard]] CBZ_API ShaderHandle ShaderCreate(const std::string &path,
                                                 const std::string &name = "");
 
-CBZ_API void shaderDestroy(ShaderHandle sh);
+CBZ_API void ShaderDestroy(ShaderHandle sh);
 
 [[nodiscard]] CBZ_API GraphicsProgramHandle
-graphicsProgramCreate(ShaderHandle sh, const std::string &name = "");
+GraphicsProgramCreate(ShaderHandle sh, const std::string &name = "");
 
-CBZ_API void graphicsProgramDestroy(GraphicsProgramHandle gph);
+CBZ_API void GraphicsProgramDestroy(GraphicsProgramHandle gph);
 
-CBZ_API void transformBind(float *transform);
+[[nodiscard]] CBZ_API ComputeProgramHandle
+ComputeProgramCreate(ShaderHandle sh, const std::string &name = "");
 
-CBZ_API void vertexBufferBind(VertexBufferHandle vbh);
+CBZ_API void ComputeProgramDestroy(ComputeProgramHandle gph);
 
-CBZ_API void indexBufferBind(IndexBufferHandle ibh);
+CBZ_API void TransformSet(float *transform);
 
-CBZ_API void submit(uint8_t target, GraphicsProgramHandle gph);
+CBZ_API void Submit(uint8_t target, GraphicsProgramHandle gph);
 
-CBZ_API bool frame();
+CBZ_API bool Frame();
 
-CBZ_API void shutdown();
+CBZ_API void Shutdown();
 
 }; // namespace cbz
 

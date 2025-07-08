@@ -1,6 +1,7 @@
 #ifndef CBZ_DEFINES_H_
 #define CBZ_DEFINES_H_
 
+#include <cstdint>
 namespace cbz {
 
 enum class NetworkStatus {
@@ -10,17 +11,17 @@ enum class NetworkStatus {
 };
 
 // Limits
-constexpr uint32_t MAX_DRAW_CALLS = 128;
-static_assert(MAX_DRAW_CALLS <= std::numeric_limits<uint32_t>::max(),
+constexpr uint32_t MAX_COMMAND_SUBMISSIONS = 128;
+static_assert(MAX_COMMAND_SUBMISSIONS <= std::numeric_limits<uint32_t>::max(),
               "MAX_DRAW_CALLS must fit in a uint32_t");
 
-constexpr uint32_t MAX_DRAW_TEXTURES = 32;
-static_assert(MAX_DRAW_TEXTURES <= std::numeric_limits<uint32_t>::max(),
+constexpr uint32_t MAX_COMMAND_TEXTURES = 32;
+static_assert(MAX_COMMAND_TEXTURES <= std::numeric_limits<uint32_t>::max(),
               "MAX_BOUND_TEXTURES must fit in a uint32_t");
 
-constexpr uint32_t MAX_DRAW_UNIFORMS = 16;
-static_assert(MAX_DRAW_UNIFORMS <= std::numeric_limits<uint32_t>::max(),
-              "MAX_DRAW_UNIFORMS must fit in a uint32_t");
+constexpr uint32_t MAX_COMMAND_BINDINGS = 16;
+static_assert(MAX_COMMAND_BINDINGS <= std::numeric_limits<uint32_t>::max(),
+              "MAX_DRAW_BINDINGS must fit in a uint32_t");
 
 // @ note one to one mapping with WGPUVertexFormat
 enum class VertexFormat : uint32_t {
@@ -241,16 +242,19 @@ enum class TextureFormat : uint32_t {
 
 // @note one to one mapping with 'WGPUAddressMode'
 enum class AddressMode : uint32_t {
-  Repeat = 0x00000000,
-  MirrorRepeat = 0x00000001,
-  ClampToEdge = 0x00000002,
+  eRepeat = 0x00000000,
+  eMirrorRepeat = 0x00000001,
+  eClampToEdge = 0x00000002,
+
+  eCount,
 };
 
 // @note one to one mapping with 'WGPUFilterMode'
-enum class FilterMode {
-  Nearest = 0x00000000,
-  Linear = 0x00000001,
-  Force32 = 0x7FFFFFFF
+enum class FilterMode : uint32_t {
+  eNearest = 0x00000000,
+  eLinear = 0x00000001,
+
+  eCount,
 };
 
 CBZ_API struct TextureBindingDesc {
@@ -373,8 +377,26 @@ enum class TextureDimension : uint32_t {
 enum class UniformType : uint32_t {
   eVec4,
   eMat4,
-  eTexture2D,
-  eSampler,
+};
+
+enum class ProgramType : uint32_t {
+  eNone,
+  eGraphics,
+  eCompute,
+};
+
+enum class BufferSlot : uint8_t {
+  e0 = 0,
+  e1 = 1,
+  e2 = 2,
+  e3 = 3,
+};
+
+enum class TextureSlot : uint8_t {
+  e0 = 4,
+  e1 = 6,
+  e2 = 8,
+  e3 = 10,
 };
 
 [[nodiscard]] constexpr uint32_t UniformTypeGetSize(UniformType type) {
@@ -383,8 +405,7 @@ enum class UniformType : uint32_t {
     return sizeof(float) * 4;
   case UniformType::eMat4:
     return sizeof(float) * 16;
-  case UniformType::eSampler:
-  case UniformType::eTexture2D:
+  default:
     return 0;
   }
 }
@@ -419,6 +440,7 @@ public:
 CBZ_HANDLE(VertexBufferHandle);
 CBZ_HANDLE(IndexBufferHandle);
 
+CBZ_HANDLE(StructuredBufferHandle);
 CBZ_HANDLE(TextureHandle);
 
 struct SamplerHandle {

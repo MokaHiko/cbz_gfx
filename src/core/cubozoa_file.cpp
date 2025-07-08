@@ -32,6 +32,7 @@ Result LoadFileAsBinary(const std::string &filePath,
 Result LoadFileAsText(const std::string &filePath, std::string &out) {
   std::ifstream file(filePath); // text mode is default, no need for ios::binary
   if (!file.is_open()) {
+    spdlog::error("Failed to read file at {}", filePath);
     return Result::eFailure;
   }
 

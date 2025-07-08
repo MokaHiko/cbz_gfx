@@ -1,8 +1,8 @@
 #ifndef CBZ_RENDERER_WGPU_H_
 #define CBZ_RENDERER_WGPU_H_
 
+#include "cubozoa/cubozoa_defines.h"
 #include "cubozoa_irenderer_context.h"
-#include <unordered_map>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -28,8 +28,12 @@ public:
     return mVertexLayout;
   };
 
-  [[nodiscard]] const inline std::vector<Binding> &getBindings() const {
-    return mBindings;
+  [[nodiscard]] const inline WGPUBindGroupLayout &getBindGroupLayout() const {
+    return mBindGroupLayout;
+  };
+
+  [[nodiscard]] const inline std::vector<BindingDesc> &getBindings() const {
+    return mBindingDescs;
   };
 
   [[nodiscard]] inline WGPUShaderModule getModule() const { return mModule; };
@@ -39,10 +43,13 @@ public:
   };
 
 private:
-  void parseJsonRecursive(const nlohmann::json &varJson, bool isBinding);
+  void parseJsonRecursive(const nlohmann::json &varJson, bool isBinding,
+                          uint32_t offsets);
 
 private:
-  std::vector<Binding> mBindings;
+  std::vector<BindingDesc> mBindingDescs;
+  WGPUBindGroupLayout mBindGroupLayout;
+
   VertexLayout mVertexLayout;
 
   WGPUShaderStageFlags mStages;
@@ -120,6 +127,38 @@ private:
   uint16_t mElementCount;
 };
 
+class StorageBufferWebWGPU {
+public:
+  [[nodiscard]] Result create(UniformType type, uint16_t num,
+                              const void *data = nullptr,
+                              const std::string &name = "");
+
+  void update(const void *data, uint16_t num);
+
+  void destroy();
+
+  [[nodiscard]] inline uint32_t getSize() const {
+    return UniformTypeGetSize(mElementType) * mElementCount;
+  }
+
+  [[nodiscard]] inline WGPUBindGroupEntry
+  createBindGroupEntry(uint32_t binding) const {
+    WGPUBindGroupEntry entry = {};
+    entry.nextInChain = nullptr;
+    entry.binding = binding;
+    entry.buffer = mBuffer;
+    entry.offset = 0;
+    entry.size = getSize();
+    return entry;
+  }
+
+private:
+  WGPUBuffer mBuffer;
+
+  UniformType mElementType;
+  uint16_t mElementCount;
+};
+
 class TextureWebGPU {
 public:
   Result create(uint32_t w, uint32_t h, uint32_t depth,
@@ -142,15 +181,29 @@ private:
 
 class GraphicsProgramWebGPU {
 public:
-  [[nodiscard]] Result create(const ShaderWebGPU *shader,
-                              VertexLayout *requestedVertexLayout = nullptr,
-                              const std::string &name = "");
+  [[nodiscard]] Result create(ShaderHandle sh, const std::string &name = "");
 
   [[nodiscard]] Result bind(WGPURenderPassEncoder renderPassEncoder) const;
 
-  [[nodiscard]] inline WGPUBindGroupLayout getBindGroupLayout() const {
-    return mBindGroupLayout;
+  [[nodiscard]] inline const ShaderHandle getShader() const {
+    return mShaderHandle;
   };
+
+  void destroy();
+
+private:
+  ShaderHandle mShaderHandle;
+
+  WGPUPipelineLayout mPipelineLayout;
+  WGPURenderPipeline mPipeline;
+};
+
+class ComputeProgramWebGPU {
+public:
+  [[nodiscard]] Result create(const ShaderWebGPU *shader,
+                              const std::string &name = "");
+
+  [[nodiscard]] Result bind(WGPUComputePassEncoder renderPassEncoder) const;
 
   [[nodiscard]] inline const ShaderWebGPU *getShader() const {
     return mShader;
@@ -162,9 +215,7 @@ private:
   const ShaderWebGPU *mShader;
 
   WGPUPipelineLayout mPipelineLayout;
-  WGPURenderPipeline mPipeline;
-
-  WGPUBindGroupLayout mBindGroupLayout;
+  WGPUComputePipeline mPipeline;
 };
 
 } // namespace cbz

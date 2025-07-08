@@ -1,3 +1,4 @@
+#include "cubozoa/cubozoa_defines.h"
 #include <cubozoa/cubozoa.h>
 
 #ifdef __EMSCRIPTEN__
@@ -44,8 +45,8 @@ public:
       exit(0);
     }
 
-    mLitSH = cbz::shaderCreate("assets/shaders/gltf_viewer.slang");
-    mLitPH = cbz::graphicsProgramCreate(mLitSH);
+    mLitSH = cbz::ShaderCreate("assets/shaders/gltf_viewer.slang");
+    mLitPH = cbz::GraphicsProgramCreate(mLitSH, "blit_program");
 
     cbz::VertexLayout layout;
     layout.begin(cbz::VertexStepMode::eVertex);
@@ -57,60 +58,66 @@ public:
                           cbz::VertexFormat::eFloat32x2);
     layout.end();
 
-    mQuadVBH = cbz::vertexBufferCreate(
+    mQuadVBH = cbz::VertexBufferCreate(
         layout, static_cast<uint32_t>(vertices.size()), vertices.data());
 
-    mQuadIBH = cbz::indexBufferCreate(cbz::IndexFormat::eUint16,
+    mQuadIBH = cbz::IndexBufferCreate(cbz::IndexFormat::eUint16,
                                       static_cast<uint32_t>(indices.size()),
                                       indices.data());
 
-    mAlbedoTH = cbz::texture2DCreate(cbz::TextureFormat::eRGBA8Unorm, kWidth,
+    mAlbedoTH = cbz::Texture2DCreate(cbz::TextureFormat::eRGBA8Unorm, kWidth,
                                      kHeight, "albedo");
 
-    mAlbedoSamplerUH =
-        cbz::uniformCreate("albedoSampler", cbz::UniformType::eSampler);
-  }
+    mRaytracingSH = cbz::ShaderCreate("assets/shaders/compute_add.slang");
+    mRaytracingPH = cbz::ComputeProgramCreate(mRaytracingSH);
 
-  void update() {
     static std::array<Color, kWidth * kHeight> blit = {};
-
-    float s = sin(glfwGetTime());
-    float c = cos(glfwGetTime());
-
     for (uint32_t y = 0; y < kHeight; y++) {
       for (uint32_t x = 0; x < kWidth; x++) {
         blit[y * kWidth + x] =
-            Color{static_cast<uint8_t>(s * x * 255 / (kWidth - 1)),
-                  static_cast<uint8_t>(c * y * 255 / (kHeight - 1)), 0, 255};
+            Color{static_cast<uint8_t>(x * 255 / (kWidth - 1)),
+                  static_cast<uint8_t>(y * 255 / (kHeight - 1)), 0, 255};
       }
     }
 
-    cbz::texture2DUpdate(mAlbedoTH, blit.data(), kWidth * kHeight);
+    cbz::Texture2DUpdate(mAlbedoTH, blit.data(), kWidth * kHeight);
+
+    mGeometrySBH = cbz::StructuredBufferCreate(cbz::UniformType::eVec4, 1024);
+  }
+
+  void update() {
+    // float time = glfwGetTime();
+    // cbz::UniformSet(mSettingsUH, &time);
+    cbz::TextureSet(cbz::TextureSlot::e0, mAlbedoTH,
+                    {cbz::FilterMode::eLinear, cbz::AddressMode::eClampToEdge});
+
+    cbz::TextureSet(cbz::TextureSlot::e1, mAlbedoTH,
+                    {cbz::FilterMode::eLinear, cbz::AddressMode::eClampToEdge});
+
+    cbz::VertexBufferSet(mQuadVBH);
+    cbz::IndexBufferSet(mQuadIBH);
 
     glm::mat4 transform = glm::mat4(1.0f);
     transform = glm::transpose(transform);
-    cbz::transformBind(glm::value_ptr(transform));
+    cbz::TransformSet(glm::value_ptr(transform));
 
-    cbz::textureBind(0, mAlbedoTH, mAlbedoSamplerUH,
-                     {cbz::FilterMode::Linear, cbz::AddressMode::ClampToEdge});
-
-    cbz::vertexBufferBind(mQuadVBH);
-    cbz::indexBufferBind(mQuadIBH);
-
-    cbz::submit(0, mLitPH);
-    cbz::frame();
+    cbz::Submit(0, mLitPH);
+    cbz::Frame();
   }
 
   void shutdown() {
-    cbz::uniformDestroy(mAlbedoSamplerUH);
-    cbz::textureDestroy(mAlbedoTH);
+    cbz::TextureDestroy(mAlbedoTH);
 
-    cbz::shaderDestroy(mLitSH);
-    cbz::graphicsProgramDestroy(mLitPH);
-    cbz::vertexBufferDestroy(mQuadVBH);
-    cbz::indexBufferDestroy(mQuadIBH);
+    cbz::ShaderDestroy(mLitSH);
+    cbz::GraphicsProgramDestroy(mLitPH);
+    cbz::VertexBufferDestroy(mQuadVBH);
+    cbz::IndexBufferDestroy(mQuadIBH);
 
-    cbz::shutdown();
+    cbz::StructuredBufferDestroy(mGeometrySBH);
+    cbz::ShaderDestroy(mRaytracingSH);
+    cbz::ComputeProgramDestroy(mRaytracingPH);
+
+    cbz::Shutdown();
   }
 
 private:
@@ -120,7 +127,12 @@ private:
   cbz::IndexBufferHandle mQuadIBH;
 
   cbz::TextureHandle mAlbedoTH;
-  cbz::UniformHandle mAlbedoSamplerUH;
+  cbz::UniformHandle mAlbedoUH;
+  cbz::UniformHandle mSettingsUH;
+
+  cbz::StructuredBufferHandle mGeometrySBH;
+  cbz::ShaderHandle mRaytracingSH;
+  cbz::ComputeProgramHandle mRaytracingPH;
 };
 
 int main(int argc, char **argv) {

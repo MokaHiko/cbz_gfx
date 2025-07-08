@@ -29,8 +29,8 @@ public:
     if (cbz::init({"Cubes", 1280, 720}) != cbz::Result::eSuccess) {
     }
 
-    mTriangleSH = cbz::shaderCreate("assets/shaders/triangle.slang");
-    mTrianglePH = cbz::graphicsProgramCreate(mTriangleSH);
+    mTriangleSH = cbz::ShaderCreate("assets/shaders/triangle.slang");
+    mTrianglePH = cbz::GraphicsProgramCreate(mTriangleSH);
 
     cbz::VertexLayout layout;
     layout.begin(cbz::VertexStepMode::eVertex);
@@ -40,32 +40,32 @@ public:
                           cbz::VertexFormat::eFloat32x3);
     layout.end();
 
-    mTriangleVBH = cbz::vertexBufferCreate(
+    mTriangleVBH = cbz::VertexBufferCreate(
         layout, static_cast<uint32_t>(vertices.size()), vertices.data());
 
-    mTriangleIBH = cbz::indexBufferCreate(cbz::IndexFormat::eUint16,
+    mTriangleIBH = cbz::IndexBufferCreate(cbz::IndexFormat::eUint16,
                                           static_cast<uint32_t>(indices.size()),
                                           indices.data());
   }
 
   void update() {
     glm::mat4 identity{1.0f};
-    cbz::transformBind(glm::value_ptr(identity));
+    cbz::TransformSet(glm::value_ptr(identity));
 
-    cbz::vertexBufferBind(mTriangleVBH);
-    cbz::indexBufferBind(mTriangleIBH);
+    cbz::VertexBufferSet(mTriangleVBH);
+    cbz::IndexBufferSet(mTriangleIBH);
 
-    cbz::submit(0, mTrianglePH);
-    cbz::frame();
+    cbz::Submit(0, mTrianglePH);
+    cbz::Frame();
   }
 
   void shutdown() {
-    cbz::shaderDestroy(mTriangleSH);
-    cbz::graphicsProgramDestroy(mTrianglePH);
-    cbz::vertexBufferDestroy(mTriangleVBH);
-    cbz::indexBufferDestroy(mTriangleIBH);
+    cbz::ShaderDestroy(mTriangleSH);
+    cbz::GraphicsProgramDestroy(mTrianglePH);
+    cbz::VertexBufferDestroy(mTriangleVBH);
+    cbz::IndexBufferDestroy(mTriangleIBH);
 
-    cbz::shutdown();
+    cbz::Shutdown();
   }
 
 private:

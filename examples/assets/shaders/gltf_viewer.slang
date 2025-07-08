@@ -1,9 +1,10 @@
 namespace cbz
 {
 
-public static const float PI = 3.14159265359;
+#define CBZ_DECLARE_TEXTURE_1 [vk::binding(4)]
+#define CBZ_DECLARE_TEXTURE_2 [vk::binding(6)]
 
-struct TransformData
+public struct TransformData
 {
     float4x4 model;
     float4x4 view;
@@ -13,44 +14,21 @@ struct TransformData
     float4x4 view_inv;
 };
 
-struct Draw
-{
-    uint32_t id : CBZSerialize;
+[[vk::binding(0)]]
+public StructuredBuffer<TransformData> transforms;
+
+public struct SampledTexture {
+    public float4 sample(float2 uv) {
+        return mTexture.Sample(mSampler, uv);
+    };
+
+    Texture2D mTexture;
+    SamplerState mSampler;
 };
 
-const ConstantBuffer<TransformData[128]> transforms;
-
-public float4x4 transform(uint32_t drawId)
-{
-    return transforms[drawId].model;
-}
-
-public float4x4 inverse_transform(uint32_t drawId)
-{
-    return transforms[drawId].model_inv;
-}
-
-public float4x4 view(uint32_t drawId)
-{
-    return transforms[drawId].view;
-}
-
-public float4x4 inverse_view(uint32_t drawId)
-{
-    return transforms[drawId].view_inv;
-}
-
-public float4x4 proj(uint32_t drawId)
-{
-    return transforms[drawId].proj;
-}
-
-public float4x4 view_proj(uint32_t drawId)
-{
-    return mul(proj(drawId), view(drawId));
-}
-
 };
+
+#define CBZ_TRANSFORM cbz::transforms[in.drawID].model
 
 public struct Vertex
 {
@@ -72,17 +50,20 @@ struct VOut
 VOut vertexMain(Vertex in)
 {
     VOut output;
-    output.position = mul(cbz::transform(in.drawID), float4(in.position.xy, 0.0f, 1.0f));
+    output.position = mul(CBZ_TRANSFORM, float4(in.position.xy, 0.0f, 1.0f));
     output.normal = in.normal;
     output.uv = in.uv;
     return output;
 }
 
-Texture2D albedo;
-SamplerState albedoSampler;
+[CBZ_DECLARE_TEXTURE_1]
+cbz::SampledTexture albedo;
+
+[CBZ_DECLARE_TEXTURE_2]
+cbz::SampledTexture emissive;
 
 [shader("fragment")]
 float4 fragmentMain(VOut in) : SV_Target
 {
-    return albedo.Sample(albedoSampler, in.uv);
+    return albedo.sample(in.uv) * emissive.sample(in.uv);
 }
