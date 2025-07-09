@@ -84,11 +84,13 @@ public:
     cbz::Texture2DUpdate(mAlbedoTH, blit.data(), kWidth * kHeight);
 
     // Create structured buffer with 'eRGBA32Float' color values
-    mImageSBH =
-        cbz::StructuredBufferCreate(cbz::UniformType::eVec4, kWidth * kHeight, nullptr, "imageBuffer");
+    mImageSBH = cbz::StructuredBufferCreate(
+        cbz::UniformType::eVec4, kWidth * kHeight, nullptr, "imageBuffer");
 
     mRayTracingUH =
         cbz::UniformCreate("uRaytracingSettings", cbz::UniformType::eVec4);
+
+    mCameraUH = cbz::UniformCreate("uCamera", cbz::UniformType::eVec4, 2);
   }
 
   void update() {
@@ -117,16 +119,19 @@ public:
   }
 
   void shutdown() {
-    cbz::TextureDestroy(mAlbedoTH);
-
-    cbz::ShaderDestroy(mLitSH);
-    cbz::GraphicsProgramDestroy(mLitPH);
-    cbz::VertexBufferDestroy(mQuadVBH);
-    cbz::IndexBufferDestroy(mQuadIBH);
-
-    cbz::StructuredBufferDestroy(mImageSBH);
     cbz::ShaderDestroy(mRaytracingSH);
     cbz::ComputeProgramDestroy(mRaytracingPH);
+    cbz::UniformDestroy(mCameraUH);
+    cbz::UniformDestroy(mRayTracingUH);
+    cbz::StructuredBufferDestroy(mImageSBH);
+
+    cbz::TextureDestroy(mAlbedoTH);
+    cbz::UniformDestroy(mUniformUH);
+
+    cbz::VertexBufferDestroy(mQuadVBH);
+    cbz::IndexBufferDestroy(mQuadIBH);
+    cbz::GraphicsProgramDestroy(mLitPH);
+    cbz::ShaderDestroy(mLitSH);
 
     cbz::Shutdown();
   }
@@ -142,6 +147,7 @@ private:
 
   cbz::StructuredBufferHandle mImageSBH;
   cbz::UniformHandle mRayTracingUH;
+  cbz::UniformHandle mCameraUH;
   cbz::ShaderHandle mRaytracingSH;
   cbz::ComputeProgramHandle mRaytracingPH;
 };

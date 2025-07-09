@@ -196,7 +196,8 @@ void IndexBufferDestroy(IndexBufferHandle ibh) {
   }
 }
 
-StructuredBufferHandle StructuredBufferCreate(UniformType type, uint32_t elementCount,
+StructuredBufferHandle StructuredBufferCreate(UniformType type,
+                                              uint32_t elementCount,
                                               const void *data,
                                               const std::string &name) {
   StructuredBufferHandle sbh =
@@ -240,13 +241,14 @@ void StructuredBufferDestroy(StructuredBufferHandle sbh) {
 }
 
 UniformHandle UniformCreate(const std::string &name, UniformType type,
-                            uint16_t num) {
+                            uint16_t elementCount) {
   UniformHandle uh = HandleProvider<UniformHandle>::write(name);
 
   switch (type) {
   case UniformType::eVec4:
   case UniformType::eMat4: {
-    if (sRenderer->uniformBufferCreate(uh, type, num) != Result::eSuccess) {
+    if (sRenderer->uniformBufferCreate(uh, type, elementCount) !=
+        Result::eSuccess) {
       HandleProvider<UniformHandle>::free(uh);
       return {CBZ_INVALID_HANDLE};
     }

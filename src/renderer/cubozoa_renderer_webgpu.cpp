@@ -107,9 +107,9 @@ CheckAndCreateRequiredLimits(WGPUAdapter adapter) {
       supportedLimits.limits.minStorageBufferOffsetAlignment;
 
   requiredLimits.limits.maxBindGroups = 2;
-  requiredLimits.limits.maxUniformBuffersPerShaderStage = 1;
+  requiredLimits.limits.maxUniformBuffersPerShaderStage =
+      static_cast<uint32_t>(cbz::BufferSlot::eCount);
   requiredLimits.limits.maxUniformBufferBindingSize = 65536; // Default
-
   requiredLimits.limits.maxStorageBuffersPerShaderStage =
       static_cast<uint32_t>(cbz::BufferSlot::eCount);
   requiredLimits.limits.maxStorageBufferBindingSize =
@@ -1403,14 +1403,30 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
     raytraceSettingsBind.value.uniformBuffer.handle = UniformHandle{1};
     raytraceSettingsBind.value.uniformBuffer.valueType = UniformType::eVec4;
 
+    Binding cameraBinding = {};
+    cameraBinding.type = BindingType::eUniformBuffer;
+    cameraBinding.value.uniformBuffer.handle = UniformHandle{2};
+    cameraBinding.value.uniformBuffer.valueType = UniformType::eVec4;
+
     const uint32_t w = 854;
     const uint32_t h = 480;
+
     struct {
       uint32_t dim[4] = {w, h, frameCounter, 0};
     } raytracingSettings;
     UniformSet({1}, &raytracingSettings);
 
-    Binding computeUniforms[2]{imageBufferBinding, raytraceSettingsBind};
+    static float posZ = 0.0f;
+    posZ += (float)deltaTime * 0.15f;
+    struct {
+      float settings[4] = {1.0f, 0.0f, 0.0f, 0.0f}; // focal length
+      float position[4] = {0.0f, 0.0f, posZ, 0.0f};
+    } camera;
+
+    UniformSet({2}, &camera);
+
+    Binding computeUniforms[3]{imageBufferBinding, raytraceSettingsBind,
+                               cameraBinding};
 
     const uint32_t x = uint32_t(w + 7) / 8;
     const uint32_t y = uint32_t(h + 7) / 8;
@@ -1425,7 +1441,7 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
       uint32_t someHash = 1;
       const WGPUBindGroup computeBindGroup =
           findOrCreateBindGroup(&sShaders[computeProgram.getShader().idx],
-                                someHash, computeUniforms, 2);
+                                someHash, computeUniforms, 3);
 
       if (!computeBindGroup) {
         sLogger->error("Attempting to run compute pipeline without bindings!");
