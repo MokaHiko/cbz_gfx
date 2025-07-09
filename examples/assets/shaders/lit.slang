@@ -2,16 +2,6 @@ namespace cbz
 {
 
 public static const float PI = 3.14159265359;
-
-public struct Vertex
-{
-    public float3 position : POSITION;
-    public float3 normal : NORMAL;
-    public float2 uv : TEXCOORD0;
-    public float4 color : COLOR;
-    public float4 tangent : TANGENT;
-};
-
 struct TransformData
 {
     float4x4 model;

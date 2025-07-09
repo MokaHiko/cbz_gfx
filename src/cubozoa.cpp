@@ -1,8 +1,10 @@
 #include "cubozoa/cubozoa.h"
 
+#include "cbz_pch.h"
 #include "cubozoa/cubozoa_defines.h"
 #include "cubozoa/net/cubozoa_net.h"
 #include "renderer/cubozoa_irenderer_context.h"
+#include "spdlog/spdlog.h"
 
 #include <GLFW/glfw3.h>
 #include <murmurhash/MurmurHash3.h>
@@ -82,30 +84,30 @@ static StructuredBufferHandle sTransformSBH;
 static std::array<TransformData, MAX_COMMAND_SUBMISSIONS> sTransforms;
 
 Result init(InitDesc initDesc) {
-  Result res;
-
-  switch (initDesc.netStatus) {
-  case NetworkStatus::eClient:
-    res = net::initClient();
-    break;
-  case NetworkStatus::eHost:
-    res = net::initServer();
-    break;
-  case NetworkStatus::eNone:
-    res = Result::eNetworkFailure;
-    break;
-  }
-
-  if (res != Result::eSuccess) {
-    return res;
-  };
+  Result result = Result::eSuccess;
 
   sLogger = spdlog::stdout_color_mt("cbz");
   sLogger->set_level(spdlog::level::trace);
   sLogger->set_pattern("[%^%l%$][CBZ] %v");
 
+  switch (initDesc.netStatus) {
+  case NetworkStatus::eClient:
+    result = net::initClient();
+    break;
+  case NetworkStatus::eHost:
+    result = net::initServer();
+    break;
+  case NetworkStatus::eNone:
+    result = Result::eNetworkFailure;
+    break;
+  }
+
+  if (result != Result::eSuccess) {
+    return result;
+  };
+
   if (glfwInit() != GLFW_TRUE) {
-    sLogger->error("Failed to initialize glfw!");
+    sLogger->critical("Failed to initialize glfw!");
     return Result::eGLFWError;
   }
 
@@ -115,7 +117,7 @@ Result init(InitDesc initDesc) {
                              NULL, NULL);
 
   if (!sWindow) {
-    spdlog::error("Failed to create window!");
+    sLogger->critical("Failed to create window!");
     glfwTerminate();
     return Result::eGLFWError;
   }
@@ -126,12 +128,14 @@ Result init(InitDesc initDesc) {
     return Result::eFailure;
   }
 
+  // Initialize transform array to identity
   TransformData data = {};
   data.transform[0] = 1;
   data.transform[5] = 1;
   data.transform[10] = 1;
   data.transform[15] = 1;
   sTransforms.fill(data);
+
   sTransformSBH = StructuredBufferCreate(
       UniformType::eMat4,
       MAX_COMMAND_SUBMISSIONS * (sizeof(TransformData) / (sizeof(float) * 16)),
@@ -139,15 +143,16 @@ Result init(InitDesc initDesc) {
 
   sShaderProgramCmds.resize(2);
   sNextShaderProgramCmdIdx = 0;
-  return Result::eSuccess;
+
+  return result;
 }
 
 VertexBufferHandle VertexBufferCreate(const VertexLayout &vertexLayout,
-                                      uint32_t count, const void *data,
+                                      uint32_t vertexCount, const void *data,
                                       const std::string &name) {
   VertexBufferHandle vbh = HandleProvider<VertexBufferHandle>::write(name);
 
-  if (sRenderer->vertexBufferCreate(vbh, vertexLayout, count, data) !=
+  if (sRenderer->vertexBufferCreate(vbh, vertexLayout, vertexCount, data) !=
       Result::eSuccess) {
     HandleProvider<VertexBufferHandle>::free(vbh);
     return {CBZ_INVALID_HANDLE};
@@ -191,13 +196,13 @@ void IndexBufferDestroy(IndexBufferHandle ibh) {
   }
 }
 
-StructuredBufferHandle StructuredBufferCreate(UniformType type, uint32_t num,
+StructuredBufferHandle StructuredBufferCreate(UniformType type, uint32_t elementCount,
                                               const void *data,
                                               const std::string &name) {
   StructuredBufferHandle sbh =
       HandleProvider<StructuredBufferHandle>::write(name);
 
-  if (sRenderer->structuredBufferCreate(sbh, type, num, data) !=
+  if (sRenderer->structuredBufferCreate(sbh, type, elementCount, data) !=
       Result::eSuccess) {
 
     HandleProvider<StructuredBufferHandle>::free(sbh);
@@ -207,9 +212,19 @@ StructuredBufferHandle StructuredBufferCreate(UniformType type, uint32_t num,
   return sbh;
 }
 
-void StructuredBufferSet(BufferSlot slot, StructuredBufferHandle sbh) {
+void StructuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,
+                            const void *data, uint32_t offset) {
+  sRenderer->structuredBufferUpdate(sbh, elementCount, data, offset);
+}
+
+void StructuredBufferSet(BufferSlot slot, StructuredBufferHandle sbh,
+                         bool dynamic) {
   Binding binding = {};
+
   binding.type = BindingType::eStructuredBuffer;
+  if (dynamic) {
+    binding.type = BindingType::eRWStructuredBuffer;
+  }
 
   binding.value.storageBuffer.slot = static_cast<uint8_t>(slot);
   binding.value.storageBuffer.handle = sbh;
@@ -244,7 +259,7 @@ UniformHandle UniformCreate(const std::string &name, UniformType type,
 }
 
 void UniformSet(UniformHandle uh, void *data, uint16_t num) {
-  if (uh.idx == CBZ_INVALID_HANDLE) {
+  if (!HandleProvider<UniformHandle>::isValid(uh)) {
     sLogger->warn("Attempting to set uniform with invalid handle!");
     return;
   }
@@ -259,10 +274,13 @@ void UniformSet(UniformHandle uh, void *data, uint16_t num) {
 }
 
 void UniformDestroy(UniformHandle uh) {
-  if (HandleProvider<UniformHandle>::isValid(uh)) {
-    sRenderer->uniformBufferDestroy(uh);
-    HandleProvider<UniformHandle>::free(uh);
+  if (!HandleProvider<UniformHandle>::isValid(uh)) {
+    sLogger->warn("Attempting to destroy uniform with invalid handle!");
+    return;
   }
+
+  sRenderer->uniformBufferDestroy(uh);
+  HandleProvider<UniformHandle>::free(uh);
 }
 
 TextureHandle Texture2DCreate(TextureFormat format, uint32_t w, uint32_t h,
@@ -387,7 +405,6 @@ void Submit(uint8_t _, GraphicsProgramHandle gph) {
     return;
   }
 
-  // StructuredBufferSet(BufferSlot::e0, sTransformSBH, sTransforms.data());
   StructuredBufferSet(BufferSlot::e0, sTransformSBH);
 
   if (sNextShaderProgramCmdIdx >= MAX_COMMAND_BINDINGS) {
@@ -403,8 +420,9 @@ void Submit(uint8_t _, GraphicsProgramHandle gph) {
   // TODO: Submit to target array
   uint32_t uniformHash;
   MurmurHash3_x86_32(currentCommand->bindings.data(),
-                     static_cast<uint32_t>(currentCommand->bindings.size()), 0,
-                     &uniformHash);
+                     static_cast<uint32_t>(currentCommand->bindings.size()) *
+                         sizeof(Binding),
+                     0, &uniformHash);
 
   currentCommand->program.graphics.ph = gph;
   currentCommand->sortKey =
@@ -418,14 +436,21 @@ void Submit(uint8_t _, GraphicsProgramHandle gph) {
 }
 
 bool Frame() {
+  const uint32_t submissionCount = sNextShaderProgramCmdIdx;
+
+  if (submissionCount > 0) {
+    StructuredBufferUpdate(sTransformSBH, submissionCount, sTransforms.data());
+  }
+
   std::sort(sShaderProgramCmds.begin(),
-            sShaderProgramCmds.begin() + sNextShaderProgramCmdIdx,
+            sShaderProgramCmds.begin() + submissionCount,
             [](const ShaderProgramCommand &a, const ShaderProgramCommand &b) {
               return a.sortKey < b.sortKey;
             });
 
-  sRenderer->submitSorted(sShaderProgramCmds.data(), sNextShaderProgramCmdIdx);
+  sRenderer->submitSorted(sShaderProgramCmds.data(), submissionCount);
 
+  // Clear submissions
   for (uint32_t i = 0; i < sNextShaderProgramCmdIdx; i++) {
     sShaderProgramCmds[i].bindings.clear();
     sShaderProgramCmds[i].programType = ProgramType::eNone;

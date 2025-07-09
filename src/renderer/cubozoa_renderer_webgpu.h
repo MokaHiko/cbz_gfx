@@ -129,11 +129,11 @@ private:
 
 class StorageBufferWebWGPU {
 public:
-  [[nodiscard]] Result create(UniformType type, uint16_t num,
+  [[nodiscard]] Result create(UniformType type, uint32_t num,
                               const void *data = nullptr,
                               const std::string &name = "");
 
-  void update(const void *data, uint16_t num);
+  void update(const void *data, uint32_t elementCount, uint32_t elementOffset = 0);
 
   void destroy();
 
@@ -156,7 +156,7 @@ private:
   WGPUBuffer mBuffer;
 
   UniformType mElementType;
-  uint16_t mElementCount;
+  uint32_t mElementCount;
 };
 
 class TextureWebGPU {
@@ -200,19 +200,16 @@ private:
 
 class ComputeProgramWebGPU {
 public:
-  [[nodiscard]] Result create(const ShaderWebGPU *shader,
-                              const std::string &name = "");
+  [[nodiscard]] Result create(ShaderHandle sh, const std::string &name = "");
 
   [[nodiscard]] Result bind(WGPUComputePassEncoder renderPassEncoder) const;
 
-  [[nodiscard]] inline const ShaderWebGPU *getShader() const {
-    return mShader;
-  };
+  [[nodiscard]] inline ShaderHandle getShader() const { return mShaderHandle; };
 
   void destroy();
 
 private:
-  const ShaderWebGPU *mShader;
+  ShaderHandle mShaderHandle;
 
   WGPUPipelineLayout mPipelineLayout;
   WGPUComputePipeline mPipeline;

@@ -16,7 +16,7 @@ CBZ_API struct InitDesc {
 CBZ_API Result init(InitDesc initDesc);
 
 [[nodiscard]] CBZ_API VertexBufferHandle
-VertexBufferCreate(const VertexLayout &vertexLayout, uint32_t num,
+VertexBufferCreate(const VertexLayout &vertexLayout, uint32_t vertexCount,
                    const void *data = nullptr, const std::string &name = "");
 
 CBZ_API void VertexBufferSet(VertexBufferHandle vbh);
@@ -31,11 +31,15 @@ CBZ_API void IndexBufferSet(IndexBufferHandle ibh);
 
 CBZ_API void IndexBufferDestroy(IndexBufferHandle ibh);
 
-[[nodiscard]] CBZ_API StructuredBufferHandle
-StructuredBufferCreate(UniformType type, uint32_t num,
-                       const void *data = nullptr, const std::string &name = "");
+[[nodiscard]] CBZ_API StructuredBufferHandle StructuredBufferCreate(
+    UniformType type, uint32_t elementCount, const void *data = nullptr,
+    const std::string &name = "");
 
-CBZ_API void StructuredBufferSet(BufferSlot slot, StructuredBufferHandle sbh);
+void StructuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,
+                            const void *data, uint32_t offset = 0);
+
+CBZ_API void StructuredBufferSet(BufferSlot slot, StructuredBufferHandle sbh,
+                                 bool dynamic = false);
 
 CBZ_API void StructuredBufferDestroy(StructuredBufferHandle ibh);
 
@@ -80,6 +84,7 @@ CBZ_API void ComputeProgramDestroy(ComputeProgramHandle gph);
 
 CBZ_API void TransformSet(float *transform);
 
+// @note Submissions within targets order are not guaranteed.
 CBZ_API void Submit(uint8_t target, GraphicsProgramHandle gph);
 
 CBZ_API bool Frame();

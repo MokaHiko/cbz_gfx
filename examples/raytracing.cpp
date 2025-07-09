@@ -33,13 +33,12 @@ struct Color {
   uint8_t a;
 };
 
-constexpr uint32_t kWidth = 1280;
-constexpr uint32_t kHeight = 720;
+constexpr uint32_t kWidth = 854;
+constexpr uint32_t kHeight = 480;
 
 class RTWeekend {
 public:
   void init(cbz::NetworkStatus netStatus = cbz::NetworkStatus::eClient) {
-
     if (cbz::init({"RTWeekend", kWidth, kHeight, netStatus}) !=
         cbz::Result::eSuccess) {
       exit(0);
@@ -68,31 +67,43 @@ public:
     mAlbedoTH = cbz::Texture2DCreate(cbz::TextureFormat::eRGBA8Unorm, kWidth,
                                      kHeight, "albedo");
 
+    mUniformUH = cbz::UniformCreate("uMyUniform", cbz::UniformType::eVec4);
+
     mRaytracingSH = cbz::ShaderCreate("assets/shaders/compute_add.slang");
     mRaytracingPH = cbz::ComputeProgramCreate(mRaytracingSH);
 
     static std::array<Color, kWidth * kHeight> blit = {};
     for (uint32_t y = 0; y < kHeight; y++) {
       for (uint32_t x = 0; x < kWidth; x++) {
-        blit[y * kWidth + x] =
-            Color{static_cast<uint8_t>(x * 255 / (kWidth - 1)),
-                  static_cast<uint8_t>(y * 255 / (kHeight - 1)), 0, 255};
+        // blit[y * kWidth + x] =
+        //     Color{static_cast<uint8_t>(x * 255 / (kWidth - 1)),
+        //           static_cast<uint8_t>(y * 255 / (kHeight - 1)), 0, 255};
+        blit[y * kWidth + x] = Color{255, 255, 255, 255};
       }
     }
-
     cbz::Texture2DUpdate(mAlbedoTH, blit.data(), kWidth * kHeight);
 
-    mGeometrySBH = cbz::StructuredBufferCreate(cbz::UniformType::eVec4, 1024);
+    // Create structured buffer with 'eRGBA32Float' color values
+    mImageSBH =
+        cbz::StructuredBufferCreate(cbz::UniformType::eVec4, kWidth * kHeight, nullptr, "imageBuffer");
+
+    mRayTracingUH =
+        cbz::UniformCreate("uRaytracingSettings", cbz::UniformType::eVec4);
   }
 
   void update() {
-    // float time = glfwGetTime();
-    // cbz::UniformSet(mSettingsUH, &time);
+    struct {
+      float time = glfwGetTime();
+      uint32_t _padding[3]; // Uniform type is vec4
+    } myUniform;
+
+    cbz::UniformSet(mUniformUH, &myUniform);
+
+    // Blit/Skybox
     cbz::TextureSet(cbz::TextureSlot::e0, mAlbedoTH,
                     {cbz::FilterMode::eLinear, cbz::AddressMode::eClampToEdge});
 
-    cbz::TextureSet(cbz::TextureSlot::e1, mAlbedoTH,
-                    {cbz::FilterMode::eLinear, cbz::AddressMode::eClampToEdge});
+    cbz::StructuredBufferSet(cbz::BufferSlot::e1, mImageSBH);
 
     cbz::VertexBufferSet(mQuadVBH);
     cbz::IndexBufferSet(mQuadIBH);
@@ -113,7 +124,7 @@ public:
     cbz::VertexBufferDestroy(mQuadVBH);
     cbz::IndexBufferDestroy(mQuadIBH);
 
-    cbz::StructuredBufferDestroy(mGeometrySBH);
+    cbz::StructuredBufferDestroy(mImageSBH);
     cbz::ShaderDestroy(mRaytracingSH);
     cbz::ComputeProgramDestroy(mRaytracingPH);
 
@@ -127,10 +138,10 @@ private:
   cbz::IndexBufferHandle mQuadIBH;
 
   cbz::TextureHandle mAlbedoTH;
-  cbz::UniformHandle mAlbedoUH;
-  cbz::UniformHandle mSettingsUH;
+  cbz::UniformHandle mUniformUH;
 
-  cbz::StructuredBufferHandle mGeometrySBH;
+  cbz::StructuredBufferHandle mImageSBH;
+  cbz::UniformHandle mRayTracingUH;
   cbz::ShaderHandle mRaytracingSH;
   cbz::ComputeProgramHandle mRaytracingPH;
 };

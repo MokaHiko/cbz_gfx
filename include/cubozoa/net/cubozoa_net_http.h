@@ -37,6 +37,7 @@ public:
   HttpResponse(HttpResult result, std::shared_ptr<Buffer> content);
 
   const char *readAsCString() const;
+  inline uint32_t getSize() const { return mContent->getSize(); };
   inline HttpResult getResult() const { return mResult; }
 
 private:

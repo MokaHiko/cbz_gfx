@@ -1,33 +1,91 @@
-#define CBZBuffer0 0
-#define CBZBuffer1 1
-#define CBZBuffer2 2
-#define CBZBuffer3 3
-#define CBZBuffer4 4
+namespace cbz
+{
 
-#define CBZTex0 5
-#define CBZTex1 6
-#define CBZTex2 7
-#define CBZTex3 8
-#define CBZTex4 9
+#define CBZ_DECLARE_BUFFER_0 [vk::binding(0)]
+#define CBZ_DECLARE_BUFFER_1 [vk::binding(1)]
 
-#define CBZ_STRUCTURED_BUFFER(bindingIdx, T) \
-    [[vk::binding(bindingIdx)]] StructuredBuffer<T>
+#define CBZ_DECLARE_TEXTURE_1 [vk::binding(4)]
+#define CBZ_DECLARE_TEXTURE_2 [vk::binding(6)]
 
-#define CBZ_RW_STRUCTURED_BUFFER(bindingIdx, T) \
-    [[vk::binding(bindingIdx)]] RWStructuredBuffer<T>
+// Uniforms
+typedef float4 Vec4;
+typedef uint4 UVec4;
 
-#define CBZ_SAMPLED_TEXTURE_2D(bindingIdx) \
-    [[vk::binding(bindingIdx)]] Sampler2D
+static uint32_t sRandState;
 
-#define CBZ_TEXTURE_2D(bindingIdx) \
-    [[vk::binding(bindingIdx)]] Texture2D
+//@returns a random float32
+public float32_t rngFirstFloat(uint32_t seed) {
+    uint32_t rand = rngNextInt(seed);
+    return float32_t(rand) / 4294967296.0f; // Use 'f' for float32
+}
 
-CBZ_RW_STRUCTURED_BUFFER(CBZBuffer0, float4) bufferA;
+public float32_t rngNextFloat() {
+    uint32_t rand = rngNextInt(sRandState);
+    return float32_t(rand) / 4294967296.0f; // Use 'f' for float32
+}
+
+// @returns random uint32_t unique to this frame. 
+public uint32_t rngNextInt(uint32_t seed) {
+    // PCG random number generator
+    let newState = seed * 747796405u + 2891336453u;
+    sRandState = newState;
+
+    let word = ((newState >> ((newState >> 28u) + 4u)) ^ newState) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+public uint32_t initRng(float2 pixel, uint2 resolution, uint32_t frame) {
+    // Convert float2 pixel to uint2 for hashing
+    uint2 ipixel = uint2(pixel);
+    uint32_t base = ipixel.x + ipixel.y * resolution.x;
+    uint32_t hashedFrame = jenkinsHash(frame);
+    return jenkinsHash(base ^ hashedFrame);
+}
+
+uint32_t jenkinsHash(uint32_t input) {
+    var x = input;
+    x += x << 10u;
+    x ^= x >> 6u;
+    x += x << 3u;
+    x ^= x >> 11u;
+    x += x << 15u;
+    return x;
+}
+
+} // namespace cbz
+
+// Declare resouces (buffers, textures)
+[CBZ_DECLARE_BUFFER_0]
+RWStructuredBuffer<cbz::Vec4> imageBuffer;
+
+// Add Uniforms
+struct RaytracingSettings{
+    cbz::UVec4 dim; // width, height, frame_counter
+};
+
+ConstantBuffer<RaytracingSettings> uRaytracingSettings;
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void computeMain(uint2 dispatchThreadId: SV_DispatchThreadID)
+[numthreads(8, 8, 1)]
+void computeMain(uint2 gInvocationId: SV_DispatchThreadID)
 {
-    uint idx = dispatchThreadId.x;
-    bufferA[idx] = float4(1.0f, 1.0f, 1.0f, 1.0f) * sin(float(idx) / 1000.0 + 10);
+    const uint x = gInvocationId.x;
+    const uint y = gInvocationId.y;
+
+    const uint width = uRaytracingSettings.dim.x;
+    const uint height = uRaytracingSettings.dim.y;
+
+    if (x >= width || y >= height) {
+        return;
+    }
+
+    uint idx = y * width + x;
+
+    uint32_t seed = cbz::initRng(float2(x, y), uint2(width, height), uRaytracingSettings.dim.z);
+    const float r = cbz::rngFirstFloat(seed);
+    const float g = cbz::rngNextFloat();
+    const float b = cbz::rngNextFloat();
+
+    imageBuffer[idx] = float4(r, g, b, 1.0f);
+    //imageBuffer[idx] = float4(1.0f, 1.0f, 1.0f, 1.0f) * r;
 }

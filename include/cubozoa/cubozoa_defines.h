@@ -2,6 +2,7 @@
 #define CBZ_DEFINES_H_
 
 #include <cstdint>
+
 namespace cbz {
 
 enum class NetworkStatus {
@@ -10,20 +11,20 @@ enum class NetworkStatus {
   eClient,
 };
 
-// Limits
+// Minimum renderer limits
 constexpr uint32_t MAX_COMMAND_SUBMISSIONS = 128;
 static_assert(MAX_COMMAND_SUBMISSIONS <= std::numeric_limits<uint32_t>::max(),
               "MAX_DRAW_CALLS must fit in a uint32_t");
 
 constexpr uint32_t MAX_COMMAND_TEXTURES = 32;
 static_assert(MAX_COMMAND_TEXTURES <= std::numeric_limits<uint32_t>::max(),
-              "MAX_BOUND_TEXTURES must fit in a uint32_t");
+              "MAX_COMMAND_TEXTURES must fit in a uint32_t");
 
 constexpr uint32_t MAX_COMMAND_BINDINGS = 16;
 static_assert(MAX_COMMAND_BINDINGS <= std::numeric_limits<uint32_t>::max(),
-              "MAX_DRAW_BINDINGS must fit in a uint32_t");
+              "MAX_COMMAND_BINDINGS must fit in a uint32_t");
 
-// @ note one to one mapping with WGPUVertexFormat
+// @ note one to one mapping with 'WGPUVertexFormat'
 enum class VertexFormat : uint32_t {
   eUndefined = 0x00000000,
   eUint8x2 = 0x00000001,
@@ -390,6 +391,8 @@ enum class BufferSlot : uint8_t {
   e1 = 1,
   e2 = 2,
   e3 = 3,
+
+  eCount = 4,
 };
 
 enum class TextureSlot : uint8_t {

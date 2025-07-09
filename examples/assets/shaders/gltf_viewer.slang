@@ -1,9 +1,16 @@
 namespace cbz
 {
 
+#define CBZ_DECLARE_BUFFER_0 [vk::binding(0)]
+#define CBZ_DECLARE_BUFFER_1 [vk::binding(1)]
+
 #define CBZ_DECLARE_TEXTURE_1 [vk::binding(4)]
 #define CBZ_DECLARE_TEXTURE_2 [vk::binding(6)]
 
+// Uniforms
+typedef float4 Vec4;
+
+// Graphics
 public struct TransformData
 {
     float4x4 model;
@@ -14,7 +21,7 @@ public struct TransformData
     float4x4 view_inv;
 };
 
-[[vk::binding(0)]]
+[CBZ_DECLARE_BUFFER_0]
 public StructuredBuffer<TransformData> transforms;
 
 public struct SampledTexture {
@@ -26,7 +33,7 @@ public struct SampledTexture {
     SamplerState mSampler;
 };
 
-};
+}; // namespace cbz
 
 #define CBZ_TRANSFORM cbz::transforms[in.drawID].model
 
@@ -59,11 +66,26 @@ VOut vertexMain(Vertex in)
 [CBZ_DECLARE_TEXTURE_1]
 cbz::SampledTexture albedo;
 
-[CBZ_DECLARE_TEXTURE_2]
-cbz::SampledTexture emissive;
+struct MyUniform {
+    cbz::Vec4 time;
+};
+
+[CBZ_DECLARE_BUFFER_1]
+StructuredBuffer<float4> imageBuffer;
+
+ConstantBuffer<MyUniform> uMyUniform;
 
 [shader("fragment")]
 float4 fragmentMain(VOut in) : SV_Target
 {
-    return albedo.sample(in.uv) * emissive.sample(in.uv);
+    const uint width = 854;
+    const uint height = 480;
+
+    uint32_t x = uint32_t(in.uv.x * float(width));
+    uint32_t y = uint32_t(in.uv.y * float(height));
+    uint32_t index = y * width + x;
+
+    // TODO: Gamme correct
+    //return albedo.sample(in.uv) * sin(uMyUniform.time.x) * imageBuffer[index];
+    return imageBuffer[index];
 }

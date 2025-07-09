@@ -76,8 +76,4 @@ if (XCODE)
     )
 endif()
 
-# target_compile_definitions(${PROJECT_NAME} PUBLIC
-#     CBZ_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/"
-# )
-
 add_subdirectory(examples)

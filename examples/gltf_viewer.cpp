@@ -61,7 +61,7 @@ public:
     cbz::Texture2DUpdate(mAlbedoTH, color.data(), 1);
 
     mAlbedoSamplerUH =
-        cbz::UniformCreate("albedoSampler", cbz::ShaderValueType::eSampler);
+        cbz::UniformCreate("albedoSampler", cbz::UniformType::eSampler);
   }
 
   void update() {
@@ -85,7 +85,7 @@ public:
     cbz::TransformSet(glm::value_ptr(transform));
 
     cbz::TextureSet(mAlbedoTH, mAlbedoSamplerUH,
-                    {cbz::FilterMode::Linear, cbz::AddressMode::ClampToEdge});
+                    {cbz::FilterMode::eLinear, cbz::AddressMode::eClampToEdge});
 
     cbz::UniformSet();
 
@@ -116,7 +116,7 @@ private:
   cbz::IndexBufferHandle mQuadIBH;
 
   cbz::TextureHandle mAlbedoTH;
-  cbz::BindingHandle mAlbedoSamplerUH;
+  cbz::UniformHandle mAlbedoSamplerUH;
 };
 
 int main(int argc, char **argv) {

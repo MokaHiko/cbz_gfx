@@ -165,7 +165,11 @@ public:
 
   [[nodiscard]] virtual Result
   structuredBufferCreate(StructuredBufferHandle sbh, UniformType type,
-                         uint16_t num, const void *data = nullptr) = 0;
+                         uint32_t elementCount, const void *data = nullptr) = 0;
+
+  virtual void structuredBufferUpdate(StructuredBufferHandle sbh,
+                                      uint32_t elementCount, const void *data,
+                                      uint32_t elementOffset) = 0;
 
   virtual void structuredBufferDestroy(StructuredBufferHandle sbh) = 0;
 

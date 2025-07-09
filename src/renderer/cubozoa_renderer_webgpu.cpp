@@ -1,8 +1,9 @@
 #include "cubozoa_renderer_webgpu.h"
 
 #include "GLFW/glfw3.h"
-#include "cbz_pch.h"
+
 #include "core/cubozoa_file.h"
+#include "cubozoa/cubozoa.h"
 #include "cubozoa/cubozoa_defines.h"
 #include "cubozoa/net/cubozoa_net_http.h"
 #include "cubozoa_irenderer_context.h"
@@ -58,7 +59,19 @@ static WGPUQueue sQueue;
 static WGPUSurface sSurface;
 static WGPUTextureFormat sSurfaceFormat;
 
-static std::vector<cbz::ShaderWebGPU> mShaders;
+static std::vector<cbz::VertexBufferWebGPU> sVertexBuffers;
+static std::vector<cbz::IndexBufferWebGPU> sIndexBuffers;
+static std::vector<cbz::UniformBufferWebWGPU> sUniformBuffers;
+static std::vector<cbz::StorageBufferWebWGPU> sStorageBuffers;
+
+static std::vector<cbz::TextureWebGPU> sTextures;
+static std::unordered_map<uint32_t, WGPUSampler> sSamplers;
+
+static std::vector<cbz::ShaderWebGPU> sShaders;
+static std::unordered_map<uint32_t, WGPUBindGroup> sBindingGroups;
+
+static std::vector<cbz::GraphicsProgramWebGPU> sGraphicsPrograms;
+static std::vector<cbz::ComputeProgramWebGPU> sComputePrograms;
 
 static std::pair<cbz::Result, WGPURequiredLimits>
 CheckAndCreateRequiredLimits(WGPUAdapter adapter) {
@@ -97,7 +110,8 @@ CheckAndCreateRequiredLimits(WGPUAdapter adapter) {
   requiredLimits.limits.maxUniformBuffersPerShaderStage = 1;
   requiredLimits.limits.maxUniformBufferBindingSize = 65536; // Default
 
-  requiredLimits.limits.maxStorageBuffersPerShaderStage = 1;
+  requiredLimits.limits.maxStorageBuffersPerShaderStage =
+      static_cast<uint32_t>(cbz::BufferSlot::eCount);
   requiredLimits.limits.maxStorageBufferBindingSize =
       supportedLimits.limits.maxStorageBufferBindingSize;
 
@@ -190,7 +204,11 @@ public:
 
   [[nodiscard]] Result
   structuredBufferCreate(StructuredBufferHandle sbh, UniformType type,
-                         uint16_t num, const void *data = nullptr) override;
+                         uint32_t num, const void *data = nullptr) override;
+
+  void structuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,
+                              const void *data,
+                              uint32_t elementOffset) override;
 
   void structuredBufferDestroy(StructuredBufferHandle sbh) override;
 
@@ -226,23 +244,10 @@ public:
                     uint32_t count) override;
 
 private:
-  [[nodiscard]] WGPUBindGroup FindOrCreateBindGroup(const ShaderWebGPU *shader,
+  [[nodiscard]] WGPUBindGroup findOrCreateBindGroup(const ShaderWebGPU *shader,
+                                                    uint32_t descriptorHash,
                                                     const Binding *bindings,
                                                     uint32_t bindingCount);
-
-private:
-  std::vector<VertexBufferWebGPU> mVertexBuffers;
-  std::vector<IndexBufferWebGPU> mIndexBuffers;
-  std::vector<UniformBufferWebWGPU> mUniformBuffers;
-  std::vector<StorageBufferWebWGPU> mStorageBuffers;
-
-  std::vector<TextureWebGPU> mTextures;
-  std::unordered_map<uint32_t, WGPUSampler> mSamplers;
-
-  std::unordered_map<uint32_t, WGPUBindGroup> mBindingGroups;
-
-  std::vector<GraphicsProgramWebGPU> mGraphicsPrograms;
-  std::vector<ComputeProgramWebGPU> mComputePrograms;
 };
 
 Result VertexBufferWebGPU::create(const VertexLayout &vertexLayout,
@@ -424,10 +429,10 @@ void UniformBufferWebWGPU::destroy() {
   wgpuBufferDestroy(mBuffer);
 }
 
-Result StorageBufferWebWGPU::create(UniformType type, uint16_t num,
+Result StorageBufferWebWGPU::create(UniformType type, uint32_t elementCount,
                                     const void *data, const std::string &name) {
   mElementType = type;
-  mElementCount = num;
+  mElementCount = elementCount;
   uint32_t size = UniformTypeGetSize(mElementType) * mElementCount;
 
   if (size <= 0) {
@@ -463,14 +468,25 @@ Result StorageBufferWebWGPU::create(UniformType type, uint16_t num,
   return Result::eSuccess;
 }
 
-void StorageBufferWebWGPU::update(const void *data, uint16_t num) {
-  uint32_t size = UniformTypeGetSize(mElementType) * num;
+void StorageBufferWebWGPU::update(const void *data, uint32_t elementCount,
+                                  uint32_t elementOffset) {
+  uint32_t size = UniformTypeGetSize(mElementType) * elementCount;
 
-  if (num == 0) {
+  // 0 is considered whole size;
+  if (elementCount == 0) {
     size = UniformTypeGetSize(mElementType) * mElementCount;
   }
 
-  wgpuQueueWriteBuffer(sQueue, mBuffer, 0, data, size);
+  uint64_t offset = UniformTypeGetSize(mElementType) * elementOffset;
+
+  if (size + offset > getSize()) {
+    sLogger->error("Buffer update out of bounds: offset ({}) + size ({}) "
+                   "exceeds buffer size ({}).",
+                   offset, size, getSize());
+    return;
+  }
+
+  wgpuQueueWriteBuffer(sQueue, mBuffer, offset, data, size);
 }
 
 void StorageBufferWebWGPU::destroy() {
@@ -812,7 +828,11 @@ Result ShaderWebGPU::create(const std::string &path) {
 
   net::HttpResponse res =
       sShaderHttpClient->postJson("/compile", bodyJson.dump().c_str());
-  nlohmann::json responseJson = nlohmann::json::parse(res.readAsCString());
+
+  const std::string reflectionStr =
+      std::string(res.readAsCString(), res.getSize());
+  nlohmann::json responseJson = nlohmann::json::parse(reflectionStr);
+
   // Parse uniforms
   nlohmann::json json = responseJson["reflection"];
   for (const auto &paramJson : json["parameters"]) {
@@ -923,7 +943,7 @@ Result ShaderWebGPU::create(const std::string &path) {
       break;
 
     case BindingType::eNone:
-      sLogger->error("Unsupported binding type {}",
+      sLogger->error("Unsupported binding type <{}> for {}",
                      (uint32_t)getBindings()[i].type);
       break;
     }
@@ -967,7 +987,7 @@ void ShaderWebGPU::destroy() { wgpuShaderModuleRelease(mModule); }
 Result GraphicsProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
   mShaderHandle = sh;
 
-  const ShaderWebGPU *shader = &mShaders[sh.idx];
+  const ShaderWebGPU *shader = &sShaders[sh.idx];
 
   WGPURenderPipelineDescriptor pipelineDesc = {};
   pipelineDesc.nextInChain = nullptr;
@@ -1079,14 +1099,10 @@ void GraphicsProgramWebGPU::destroy() {
   wgpuRenderPipelineRelease(mPipeline);
 }
 
-Result ComputeProgramWebGPU::create(const ShaderWebGPU *shader,
-                                    const std::string &name) {
-  if (!shader) {
-    spdlog::error("Attempting to create graphics pipeline with null shader!");
-    return Result::eWGPUError;
-  }
+Result ComputeProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
+  mShaderHandle = sh;
 
-  mShader = shader;
+  const ShaderWebGPU *shader = &sShaders[sh.idx];
 
   WGPUComputePipelineDescriptor pipelineDesc = {};
   pipelineDesc.nextInChain = nullptr;
@@ -1365,6 +1381,68 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
   WGPUCommandEncoder cmdEncoder =
       wgpuDeviceCreateCommandEncoder(sDevice, &cmdEncoderDesc);
 
+  WGPUComputePassDescriptor computePassDesc = {};
+  computePassDesc.nextInChain = nullptr;
+  computePassDesc.label = "computePassX";
+  computePassDesc.timestampWrites = nullptr;
+
+  WGPUComputePassEncoder computePassEncoder =
+      wgpuCommandEncoderBeginComputePass(cmdEncoder, &computePassDesc);
+
+  // TODO: Move to application
+  {
+    Binding imageBufferBinding = {};
+    imageBufferBinding.type = BindingType::eRWStructuredBuffer;
+    imageBufferBinding.value.storageBuffer.slot =
+        static_cast<uint8_t>(BufferSlot::e0);
+    imageBufferBinding.value.storageBuffer.valueType = UniformType::eVec4;
+    imageBufferBinding.value.storageBuffer.handle = {1};
+
+    Binding raytraceSettingsBind = {};
+    raytraceSettingsBind.type = BindingType::eUniformBuffer;
+    raytraceSettingsBind.value.uniformBuffer.handle = UniformHandle{1};
+    raytraceSettingsBind.value.uniformBuffer.valueType = UniformType::eVec4;
+
+    const uint32_t w = 854;
+    const uint32_t h = 480;
+    struct {
+      uint32_t dim[4] = {w, h, frameCounter, 0};
+    } raytracingSettings;
+    UniformSet({1}, &raytracingSettings);
+
+    Binding computeUniforms[2]{imageBufferBinding, raytraceSettingsBind};
+
+    const uint32_t x = uint32_t(w + 7) / 8;
+    const uint32_t y = uint32_t(h + 7) / 8;
+
+    for (int i = 0; i < 1; i++) {
+      const ComputeProgramWebGPU &computeProgram = sComputePrograms[0];
+
+      if (computeProgram.bind(computePassEncoder) != Result::eSuccess) {
+        continue;
+      }
+
+      uint32_t someHash = 1;
+      const WGPUBindGroup computeBindGroup =
+          findOrCreateBindGroup(&sShaders[computeProgram.getShader().idx],
+                                someHash, computeUniforms, 2);
+
+      if (!computeBindGroup) {
+        sLogger->error("Attempting to run compute pipeline without bindings!");
+        continue;
+      }
+
+      uint32_t offsets = 0;
+      wgpuComputePassEncoderSetBindGroup(computePassEncoder, 0,
+                                         computeBindGroup, 0, &offsets);
+
+      wgpuComputePassEncoderDispatchWorkgroups(computePassEncoder, x, y, 1);
+    }
+  }
+
+  wgpuComputePassEncoderEnd(computePassEncoder);
+  wgpuComputePassEncoderRelease(computePassEncoder);
+
   WGPURenderPassColorAttachment renderPassColorAttachmentDesc = {};
   renderPassColorAttachmentDesc.nextInChain = nullptr;
   renderPassColorAttachmentDesc.view = surfaceTextureView;
@@ -1404,12 +1482,12 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
       switch (renderCmd.programType) {
       case ProgramType::eGraphics: {
         const GraphicsProgramWebGPU &graphicsProgram =
-            mGraphicsPrograms[renderCmd.program.graphics.ph.idx];
+            sGraphicsPrograms[renderCmd.program.graphics.ph.idx];
 
         const VertexBufferWebGPU &vb =
-            mVertexBuffers[renderCmd.program.graphics.vbh.idx];
+            sVertexBuffers[renderCmd.program.graphics.vbh.idx];
 
-        if (mShaders[graphicsProgram.getShader().idx].getVertexLayout() !=
+        if (sShaders[graphicsProgram.getShader().idx].getVertexLayout() !=
             vb.getVertexLayout()) {
           sLogger->warn("Incompatible vertex buffer and program layout for {}!",
                         HandleProvider<GraphicsProgramHandle>::getName(
@@ -1422,9 +1500,9 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
           continue;
         }
 
-        const WGPUBindGroup graphicsBindGroup = FindOrCreateBindGroup(
-            &mShaders[graphicsProgram.getShader().idx],
-            renderCmd.bindings.data(),
+        const WGPUBindGroup graphicsBindGroup = findOrCreateBindGroup(
+            &sShaders[graphicsProgram.getShader().idx],
+            renderCmd.getDescriptorHash(), renderCmd.bindings.data(),
             static_cast<uint32_t>(renderCmd.bindings.size()));
 
         if (graphicsBindGroup) {
@@ -1441,7 +1519,7 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
 
         if (renderCmd.program.graphics.ibh.idx != CBZ_INVALID_HANDLE) {
           const IndexBufferWebGPU &ib =
-              mIndexBuffers[renderCmd.program.graphics.ibh.idx];
+              sIndexBuffers[renderCmd.program.graphics.ibh.idx];
 
           if (ib.bind(renderPassEncoder) != Result::eSuccess) {
             continue;
@@ -1491,50 +1569,6 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
   wgpuRenderPassEncoderEnd(renderPassEncoder);
   wgpuRenderPassEncoderRelease(renderPassEncoder);
 
-  // WGPUComputePassDescriptor computePassDesc = {};
-  // computePassDesc.nextInChain = nullptr;
-  // computePassDesc.label = "computePassX";
-  // computePassDesc.timestampWrites = nullptr;
-  //
-  // WGPUComputePassEncoder computePassEncoder =
-  //     wgpuCommandEncoderBeginComputePass(cmdEncoder, &computePassDesc);
-
-  // // TODO: Remove
-  // Binding bufferABinding = {};
-  //
-  // bufferABinding.type = BindingType::eStructuredBuffer;
-  // bufferABinding.value.storageBuffer.valueType = UniformType::eVec4;
-  // bufferABinding.value.storageBuffer.handle = {0};
-  //
-  // Binding computeUniforms[1]{bufferABinding};
-  //
-  // for (int i = 0; i < 1; i++) {
-  //   const ComputeProgramWebGPU &computeProgram = mComputePrograms[0];
-  //
-  //   if (computeProgram.bind(computePassEncoder) != Result::eSuccess) {
-  //     continue;
-  //   }
-  //
-  //   const WGPUBindGroup computeBindGroup =
-  //       FindOrCreateBindGroup(computeProgram.getShader(), computeUniforms,
-  //       1);
-  //
-  //   if (!computeBindGroup) {
-  //     sLogger->warn("Attempting to run compute pipeline without bindings!");
-  //     continue;
-  //   }
-  //
-  //   uint32_t offsets = 0;
-  //   wgpuComputePassEncoderSetBindGroup(computePassEncoder, 0,
-  //   computeBindGroup,
-  //                                      0, &offsets);
-  //
-  //   wgpuComputePassEncoderDispatchWorkgroups(computePassEncoder, 1, 1, 1);
-  // }
-
-  // wgpuComputePassEncoderEnd(computePassEncoder);
-  // wgpuComputePassEncoderRelease(computePassEncoder);
-
   WGPUCommandBufferDescriptor cmdDesc = {};
   cmdDesc.nextInChain = nullptr;
   cmdDesc.label = "CommandBufferX";
@@ -1560,69 +1594,76 @@ Result
 RendererContextWebGPU::vertexBufferCreate(VertexBufferHandle vbh,
                                           const VertexLayout &vertexLayout,
                                           uint32_t count, const void *data) {
-  if (mVertexBuffers.size() < vbh.idx + 1) {
-    mVertexBuffers.resize(vbh.idx + 1);
+  if (sVertexBuffers.size() < vbh.idx + 1) {
+    sVertexBuffers.resize(vbh.idx + 1);
   }
 
-  return mVertexBuffers[vbh.idx].create(vertexLayout, count, data);
+  return sVertexBuffers[vbh.idx].create(vertexLayout, count, data);
 }
 
 void RendererContextWebGPU::vertexBufferDestroy(VertexBufferHandle vbh) {
-  return mVertexBuffers[vbh.idx].destroy();
+  return sVertexBuffers[vbh.idx].destroy();
 }
 
 Result RendererContextWebGPU::indexBufferCreate(IndexBufferHandle ibh,
                                                 IndexFormat format,
                                                 uint32_t count,
                                                 const void *data) {
-  if (mIndexBuffers.size() < ibh.idx + 1) {
-    mIndexBuffers.resize(ibh.idx + 1);
+  if (sIndexBuffers.size() < ibh.idx + 1) {
+    sIndexBuffers.resize(ibh.idx + 1);
   }
 
-  return mIndexBuffers[ibh.idx].create(static_cast<WGPUIndexFormat>(format),
+  return sIndexBuffers[ibh.idx].create(static_cast<WGPUIndexFormat>(format),
                                        count, data);
 }
 
 void RendererContextWebGPU::indexBufferDestroy(IndexBufferHandle ibh) {
-  return mIndexBuffers[ibh.idx].destroy();
+  return sIndexBuffers[ibh.idx].destroy();
 }
 
 Result RendererContextWebGPU::uniformBufferCreate(UniformHandle uh,
                                                   UniformType type,
                                                   uint16_t num,
                                                   const void *data) {
-  if (mUniformBuffers.size() < uh.idx + 1) {
-    mUniformBuffers.resize(uh.idx + 1);
+  if (sUniformBuffers.size() < uh.idx + 1) {
+    sUniformBuffers.resize(uh.idx + 1);
   }
 
-  return mUniformBuffers[uh.idx].create(
+  return sUniformBuffers[uh.idx].create(
       type, num, data, HandleProvider<UniformHandle>::getName(uh));
 }
 
 void RendererContextWebGPU::uniformBufferUpdate(UniformHandle uh, void *data,
                                                 uint32_t num) {
-  mUniformBuffers[uh.idx].update(data, num);
+  sUniformBuffers[uh.idx].update(data, num);
 }
 
 void RendererContextWebGPU::uniformBufferDestroy(UniformHandle uh) {
-  return mUniformBuffers[uh.idx].destroy();
+  return sUniformBuffers[uh.idx].destroy();
 }
 
 Result RendererContextWebGPU::structuredBufferCreate(StructuredBufferHandle sbh,
                                                      UniformType type,
-                                                     uint16_t num,
+                                                     uint32_t num,
                                                      const void *data) {
-  if (mStorageBuffers.size() < sbh.idx + 1) {
-    mStorageBuffers.resize(sbh.idx + 1);
+  if (sStorageBuffers.size() < sbh.idx + 1) {
+    sStorageBuffers.resize(sbh.idx + 1);
   }
 
-  return mStorageBuffers[sbh.idx].create(
+  return sStorageBuffers[sbh.idx].create(
       type, num, data, HandleProvider<StructuredBufferHandle>::getName(sbh));
 };
 
+void RendererContextWebGPU::structuredBufferUpdate(StructuredBufferHandle sbh,
+                                                   uint32_t elementCount,
+                                                   const void *data,
+                                                   uint32_t elementOffset) {
+  sStorageBuffers[sbh.idx].update(data, elementCount, elementOffset);
+}
+
 void RendererContextWebGPU::structuredBufferDestroy(
     StructuredBufferHandle sbh) {
-  return mUniformBuffers[sbh.idx].destroy();
+  return sUniformBuffers[sbh.idx].destroy();
 }
 
 SamplerHandle
@@ -1630,7 +1671,7 @@ RendererContextWebGPU::getSampler(TextureBindingDesc texBindingDesc) {
   uint32_t samplerID;
   MurmurHash3_x86_32(&texBindingDesc, sizeof(texBindingDesc), 0, &samplerID);
 
-  if (mSamplers.find(samplerID) != mSamplers.end()) {
+  if (sSamplers.find(samplerID) != sSamplers.end()) {
     return SamplerHandle{samplerID};
   }
 
@@ -1654,7 +1695,7 @@ RendererContextWebGPU::getSampler(TextureBindingDesc texBindingDesc) {
   samplerDesc.maxAnisotropy = 1;
 
   WGPUSampler sampler = wgpuDeviceCreateSampler(sDevice, &samplerDesc);
-  mSamplers[samplerID] = sampler;
+  sSamplers[samplerID] = sampler;
   return SamplerHandle{samplerID};
 };
 
@@ -1662,61 +1703,61 @@ Result RendererContextWebGPU::textureCreate(TextureHandle th,
                                             TextureFormat format, uint32_t w,
                                             uint32_t h, uint32_t depth,
                                             TextureDimension dimension) {
-  if (mTextures.size() < th.idx + 1) {
-    mTextures.resize(th.idx + 1);
+  if (sTextures.size() < th.idx + 1) {
+    sTextures.resize(th.idx + 1);
   }
 
-  return mTextures[th.idx].create(w, h, depth, TextureDimToWGPU(dimension),
+  return sTextures[th.idx].create(w, h, depth, TextureDimToWGPU(dimension),
                                   static_cast<WGPUTextureFormat>(format));
 }
 
 void RendererContextWebGPU::textureUpdate(TextureHandle th, void *data,
                                           uint32_t count) {
-  mTextures[th.idx].update(data, count);
+  sTextures[th.idx].update(data, count);
 };
 
 void RendererContextWebGPU::textureDestroy(TextureHandle th) {
-  return mTextures[th.idx].destroy();
+  return sTextures[th.idx].destroy();
 };
 
 Result RendererContextWebGPU::shaderCreate(ShaderHandle sh,
                                            const std::string &path) {
-  if (mShaders.size() < sh.idx + 1) {
-    mShaders.resize(sh.idx + 1);
+  if (sShaders.size() < sh.idx + 1) {
+    sShaders.resize(sh.idx + 1);
   }
 
-  return mShaders[sh.idx].create(path);
+  return sShaders[sh.idx].create(path);
 }
 
 void RendererContextWebGPU::shaderDestroy(ShaderHandle sh) {
-  return mShaders[sh.idx].destroy();
+  return sShaders[sh.idx].destroy();
 }
 
 Result RendererContextWebGPU::graphicsProgramCreate(GraphicsProgramHandle gph,
                                                     ShaderHandle sh) {
-  if (mGraphicsPrograms.size() < gph.idx + 1) {
-    mGraphicsPrograms.resize(gph.idx + 1);
+  if (sGraphicsPrograms.size() < gph.idx + 1) {
+    sGraphicsPrograms.resize(gph.idx + 1);
   }
 
-  return mGraphicsPrograms[gph.idx].create(
+  return sGraphicsPrograms[gph.idx].create(
       sh, HandleProvider<GraphicsProgramHandle>::getName(gph));
 }
 
 void RendererContextWebGPU::graphicsProgramDestroy(GraphicsProgramHandle gph) {
-  return mGraphicsPrograms[gph.idx].destroy();
+  return sGraphicsPrograms[gph.idx].destroy();
 }
 
 Result RendererContextWebGPU::computeProgramCreate(ComputeProgramHandle cph,
                                                    ShaderHandle sh) {
-  if (mComputePrograms.size() < cph.idx + 1) {
-    mComputePrograms.resize(cph.idx + 1);
+  if (sComputePrograms.size() < cph.idx + 1) {
+    sComputePrograms.resize(cph.idx + 1);
   }
 
-  return mComputePrograms[cph.idx].create(&mShaders[sh.idx]);
+  return sComputePrograms[cph.idx].create(sh);
 }
 
 void RendererContextWebGPU::computeProgramDestroy(ComputeProgramHandle cph) {
-  return mComputePrograms[cph.idx].destroy();
+  return sComputePrograms[cph.idx].destroy();
 }
 
 void RendererContextWebGPU::shutdown() {
@@ -1727,18 +1768,16 @@ void RendererContextWebGPU::shutdown() {
   wgpuDeviceRelease(sDevice);
 }
 
-WGPUBindGroup
-RendererContextWebGPU::FindOrCreateBindGroup(const ShaderWebGPU *shader,
-                                             const Binding *bindings,
-                                             uint32_t bindingCount) {
+WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
+    const ShaderWebGPU *shader, uint32_t descriptorHash,
+    const Binding *bindings, uint32_t bindingCount) {
   if (!bindingCount || !bindings) {
     return nullptr;
   }
 
-  const uint32_t descriptorHash = 1;
   const std::vector<BindingDesc> &shaderBindingDescs = shader->getBindings();
 
-  if (mBindingGroups.find(descriptorHash) == mBindingGroups.end()) {
+  if (sBindingGroups.find(descriptorHash) == sBindingGroups.end()) {
 
     WGPUBindGroupDescriptor bindGroupDesc = {};
     bindGroupDesc.nextInChain = nullptr;
@@ -1749,8 +1788,6 @@ RendererContextWebGPU::FindOrCreateBindGroup(const ShaderWebGPU *shader,
 
     for (uint32_t i = 0; i < static_cast<uint32_t>(shaderBindingDescs.size());
          i++) {
-      const BindingDesc *bindingDesc = &shaderBindingDescs[i];
-
       switch (bindings[i].type) {
       case BindingType::eUniformBuffer: {
         switch (bindings[i].value.uniformBuffer.valueType) {
@@ -1772,7 +1809,7 @@ RendererContextWebGPU::FindOrCreateBindGroup(const ShaderWebGPU *shader,
           }
 
           bindGroupEntries[i] =
-              mUniformBuffers[uh.idx].createBindGroupEntry(bindingDesc->index);
+              sUniformBuffers[uh.idx].createBindGroupEntry(it->index);
         } break;
 
         default:
@@ -1805,7 +1842,7 @@ RendererContextWebGPU::FindOrCreateBindGroup(const ShaderWebGPU *shader,
           }
 
           bindGroupEntries[i] =
-              mStorageBuffers[sbh.idx].createBindGroupEntry(bindingDesc->index);
+              sStorageBuffers[sbh.idx].createBindGroupEntry(it->index);
         } break;
 
         default:
@@ -1836,8 +1873,7 @@ RendererContextWebGPU::FindOrCreateBindGroup(const ShaderWebGPU *shader,
           return nullptr;
         }
 
-        bindGroupEntries[i] =
-            mTextures[th.idx].createBindGroupEntry(bindingDesc->index);
+        bindGroupEntries[i] = sTextures[th.idx].createBindGroupEntry(it->index);
       } break;
 
       case BindingType::eSampler: {
@@ -1846,7 +1882,7 @@ RendererContextWebGPU::FindOrCreateBindGroup(const ShaderWebGPU *shader,
         const auto &it = std::find_if(
             shaderBindingDescs.begin(), shaderBindingDescs.end(),
             [=](const BindingDesc &bindingDesc) {
-              return bindingDesc.index == bindings[i].value.texture.slot;
+              return bindingDesc.index == bindings[i].value.sampler.slot;
             });
 
         if (it->type != BindingType::eSampler) {
@@ -1857,14 +1893,14 @@ RendererContextWebGPU::FindOrCreateBindGroup(const ShaderWebGPU *shader,
 
         if (it == shaderBindingDescs.end()) {
           sLogger->error("Bound program has no uniform binding named {}",
-                         "albedoSampler"); // TODO: Change to name of sampler.
+                         "'sampler'"); // TODO: Change to name of sampler.
           return nullptr;
         }
 
         WGPUBindGroupEntry entry = {};
-        entry.binding = bindingDesc->index;
+        entry.binding = it->index;
         entry.nextInChain = nullptr;
-        entry.sampler = mSamplers[sh.idx];
+        entry.sampler = sSamplers[sh.idx];
         bindGroupEntries[i] = entry;
       } break;
 
@@ -1877,11 +1913,11 @@ RendererContextWebGPU::FindOrCreateBindGroup(const ShaderWebGPU *shader,
     bindGroupDesc.entryCount = bindingCount;
     bindGroupDesc.entries = bindGroupEntries.data();
 
-    return mBindingGroups[descriptorHash] =
+    return sBindingGroups[descriptorHash] =
                wgpuDeviceCreateBindGroup(sDevice, &bindGroupDesc);
   }
 
-  return mBindingGroups[descriptorHash];
+  return sBindingGroups[descriptorHash];
 }
 
 } // namespace cbz
