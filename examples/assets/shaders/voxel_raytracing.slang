@@ -6,28 +6,31 @@ namespace cbz
 
 #define CBZ_DECLARE_TEXTURE_1 [vk::binding(4)]
 #define CBZ_DECLARE_TEXTURE_2 [vk::binding(6)]
+static const float32_t PI = 3.14159265359;
 
 // Uniforms
 typedef float4 Vec4;
 typedef uint4 UVec4;
 
 static uint32_t sRandState;
-
-//@returns a random float32
-public float32_t rngFirstFloat(uint32_t seed)
-{
-    uint32_t rand = rngNextInt(seed);
-    return float32_t(rand) / 4294967296.0f; // Use 'f' for float32
-}
+static uint32_t sRandSeed = 0;
+static bool sFirstRandom = true;
 
 public float32_t rngNextFloat()
 {
+    if (sFirstRandom) {
+        sFirstRandom = false;
+
+        uint32_t rand = rngNextInt(sRandSeed);
+        return float32_t(rand) / 4294967296.0f; // Use 'f' for float32
+    }
+
     uint32_t rand = rngNextInt(sRandState);
     return float32_t(rand) / 4294967296.0f; // Use 'f' for float32
 }
 
 // @returns random uint32_t unique to this frame.
-public uint32_t rngNextInt(uint32_t seed)
+uint32_t rngNextInt(uint32_t seed)
 {
     // PCG random number generator
     let newState = seed * 747796405u + 2891336453u;
@@ -37,13 +40,14 @@ public uint32_t rngNextInt(uint32_t seed)
     return (word >> 22u) ^ word;
 }
 
-public uint32_t initRng(float2 pixel, uint2 resolution, uint32_t frame)
+public void rngInit(float2 pixel, uint2 resolution, uint32_t frame)
 {
     // Convert float2 pixel to uint2 for hashing
     uint2 ipixel = uint2(pixel);
     uint32_t base = ipixel.x + ipixel.y * resolution.x;
     uint32_t hashedFrame = jenkinsHash(frame);
-    return jenkinsHash(base ^ hashedFrame);
+
+    sRandSeed = jenkinsHash(base ^ hashedFrame);
 }
 
 uint32_t jenkinsHash(uint32_t input)
@@ -57,22 +61,12 @@ uint32_t jenkinsHash(uint32_t input)
     return x;
 }
 
-// uint32_t seed = cbz::initRng(float2(x, y), uint2(width, height), uRaytracingSettings.dim.z);
-// const float r = cbz::rngFirstFloat(seed);
-// const float g = cbz::rngNextFloat();
-// const float b = cbz::rngNextFloat();
-// imageBuffer[idx] = float4(r, g, b, 1.0f);
-// uint32_t seed = cbz::initRng(float2(x, y), uint2(width, height), uRaytracingSettings.dim.z);
-// const float r = cbz::rngFirstFloat(seed);
-// const float g = cbz::rngNextFloat();
-// const float b = cbz::rngNextFloat();
-// imageBuffer[idx] = float4(r, g, b, 1.0f);
-
 } // namespace cbz
 
 static const float3 VOXEL_SIZE = (0.1);
 static const float EPSILON = 0.001f;
 static const uint32_t MAX_STEPS = 500;
+static const uint32_t MAX_BOUNCES = 10;
 static float2 k = float2(1, -1);
 static float h = 0.0001; // replace by an appropriate value
 
@@ -141,12 +135,6 @@ public struct SDFSphere : SDFShape
     private float mRadius;
 }
 
-// float torusSDF(float3 eye, float2 t)
-// {
-//     float2 q = float2(length(eye.xz) - t.x, eye.y);
-//     return length(q) - t.y;
-// }
-
 // Declare resouces (buffers, textures)
 [CBZ_DECLARE_BUFFER_0]
 RWStructuredBuffer<cbz::Vec4> imageBuffer;
@@ -174,50 +162,42 @@ struct Camera
 };
 
 static const SDFShape[2] shapes = {
-    SDFSphere(float3(0.0, 0.0, -3.0), 1.0),
-    SDFSphere(float3(1.0, 0.0, -1.0), 1.0),
+    SDFSphere(float3(0.0, 0, -1.0), 0.5),
+    SDFSphere(float3(0.0, -100.5, -1.0), 100.0),
 };
 
 ConstantBuffer<RaytracingSettings> uRaytracingSettings;
 ConstantBuffer<Camera> uCamera;
 
-[shader("compute")]
-[numthreads(8, 8, 1)]
-void computeMain(uint2 gInvocationId: SV_DispatchThreadID)
-{
+// Based on technique by Nelari (nelair.us)
+// See: https:// nelari.us/post/weekend_raytracing_with_wgpu_1/#generate-random-points-in-spheres-and-disks
+float3 rngNextVec3InUnitSphere() {
+    // r^3 ~ U(0, 1)
+    let r = pow(cbz::rngNextFloat(), 0.33333f);
+    let cosTheta = 1.0f - 2.0f * cbz::rngNextFloat();
+    let sinTheta = sqrt(1.0f - cosTheta * cosTheta);
+    let phi = 2.0f * cbz::PI * cbz::rngNextFloat();
 
-    uint32_t x = gInvocationId.x;
-    uint32_t y = gInvocationId.y;
+    let x = r * sinTheta * cos(phi);
+    let y = r * sinTheta * sin(phi);
+    let z = cosTheta;
 
-    uint32_t width = uRaytracingSettings.dim.x;
-    uint32_t height = uRaytracingSettings.dim.y;
+    return float3(x, y, z);
+}
 
-    if (x >= width || y >= height)
-    {
-        return;
-    }
+float3 rngNextVec3InUnitHemisphere(float3 normal) {
+    float3 unitOnSphere = rngNextVec3InUnitSphere();
+    float factor = dot(normal, unitOnSphere);
+    return unitOnSphere * sign(factor);
+}
 
-    uint32_t idx = y * width + x;
+struct RayHit {
+    Ray nextRay;
+    float3 color;
+    bool shouldContinue;
+}
 
-    float viewPortHeight = 2.0f;
-    float viewPortWidth = viewPortHeight * (float(width) / height);
-
-    float3 viewPortU = float3(viewPortWidth, 0.0, 0.0);
-    float3 viewPortV = float3(0, viewPortHeight, 0.0) * -1.0f;
-
-    float3 pixelDeltaU = viewPortU / width;
-    float3 pixelDeltaV = viewPortV / height;
-
-    // Calculate the location of upper left pixel
-    float3 viewPort00Pos = uCamera.position() - float3(0.0f, 0.0f, uCamera.focalLength()) - (viewPortU / 2.0) - (viewPortV / 2.0);
-    float3 pixel00Pos = viewPort00Pos + 0.5 * (pixelDeltaU + pixelDeltaV);
-
-    float3 pixelPos = pixel00Pos + (x * pixelDeltaU) + (y * pixelDeltaV);
-    float3 rayDir = pixelPos - uCamera.position();
-
-    Ray ray = Ray(uCamera.position(), rayDir);
-    float t = 0.0f;
-
+RayHit Raycast(Ray ray) {
     float3 pos = ray.getOrigin() / VOXEL_SIZE;
     float3 voxPos = floor(pos);
 
@@ -252,8 +232,28 @@ void computeMain(uint2 gInvocationId: SV_DispatchThreadID)
         // Calculate sdf for all objects and find min
         if (shortestDistance < EPSILON)
         {
-            imageBuffer[idx] = float4(shapes[closestShapeIdx].calcNormal(eye), 1.0f);
-            return;
+            float3 normal = shapes[closestShapeIdx].calcNormal(eye);
+            float3 direction = rngNextVec3InUnitHemisphere(normal);
+
+            RayHit hit;
+
+            // Debug normals
+            hit.shouldContinue = false;
+            hit.color = normal;
+
+            // Debug positions as colors
+            // hit.shouldContinue = false;
+            // hit.color = eye;
+
+            //Debug hemisphere 
+            // hit.color = direction;
+            // hit.shouldContinue = false;
+
+            // hit.nextRay = Ray(float3(eye + normal * EPSILON), direction);
+            // hit.color = (0.5, 0.5, 0.5); 
+            // hit.shouldContinue = true;
+
+            return hit;
         };
 
         float3 absMaxDist = abs(maxDist);
@@ -275,6 +275,68 @@ void computeMain(uint2 gInvocationId: SV_DispatchThreadID)
         }
     }
 
+    RayHit hit;
     float ySNORM = ray.at(1.0f).y * 0.5f + 1.0;
-    imageBuffer[idx] = float4((1.0 - ySNORM) * float3(1.0f, 1.0f, 1.0f) + ySNORM * float3(0.5, 0.7, 1.0), 1.0f);
+    hit.color = float3((1.0 - ySNORM) * float3(1.0f, 1.0f, 1.0f) + ySNORM * float3(0.5, 0.7, 1.0));
+    hit.shouldContinue = false;
+    return hit;
+}
+
+// TODO: Take Control of Graphics & Compute mains
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void computeMain(uint2 gInvocationId: SV_DispatchThreadID)
+{
+    uint32_t x = gInvocationId.x;
+    uint32_t y = gInvocationId.y;
+
+    uint32_t width = uRaytracingSettings.dim.x;
+    uint32_t height = uRaytracingSettings.dim.y;
+
+    if (x >= width || y >= height)
+    {
+        return;
+    }
+
+    // Init systems
+    cbz::rngInit(float2(x, y), uint2(width, height), uRaytracingSettings.dim.z);
+
+    uint32_t idx = y * width + x;
+
+    float viewPortHeight = 2.0f;
+    float viewPortWidth = viewPortHeight * (float(width) / height);
+
+    float3 viewPortU = float3(viewPortWidth, 0.0, 0.0);
+    float3 viewPortV = float3(0, viewPortHeight, 0.0) * -1.0f;
+
+    float3 pixelDeltaU = viewPortU / width;
+    float3 pixelDeltaV = viewPortV / height;
+
+    // Calculate the location of upper left pixel
+    float3 viewPort00Pos = uCamera.position() - float3(0.0f, 0.0f, uCamera.focalLength()) - (viewPortU / 2.0) - (viewPortV / 2.0);
+    float3 pixel00Pos = viewPort00Pos + 0.5 * (pixelDeltaU + pixelDeltaV);
+
+    float3 pixelPos = pixel00Pos + (x * pixelDeltaU) + (y * pixelDeltaV);
+    float3 rayDir = pixelPos - uCamera.position();
+
+    // Cast rays
+    float3 radiance = float3(1.0f);
+
+    RayHit hit;
+    hit.shouldContinue = true;
+    hit.nextRay = Ray(uCamera.position(), rayDir);
+
+    uint32_t iter = 0;
+    while (iter < MAX_BOUNCES) {
+        ++iter;
+
+        hit = Raycast(hit.nextRay);
+        radiance *= hit.color;
+
+        if (!hit.shouldContinue) {
+            break;
+        }
+    }
+
+    imageBuffer[idx] = float4(radiance, 1.0f);
 }
