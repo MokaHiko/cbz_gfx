@@ -173,9 +173,15 @@ HttpClientNative::sendRawRequest(const std::string &requestStr) {
       }
     }
   }
+  if (responseBuf.size() > std::numeric_limits<uint32_t>::max()) {
+      spdlog::error("Buffer exceeded max capacity size > {}",std::numeric_limits<uint32_t>::max());
+      return {HttpResult::eBufferOverflow};
+  }
+  uint32_t readAhead = static_cast<uint32_t>(responseBuf.size());
 
-  uint32_t readAhead = responseBuf.size();
-  uint32_t bytesRemaining = contentSize - readAhead;
+  assert(contentSize > readAhead);
+  uint32_t bytesRemaining = static_cast<uint32_t>(contentSize - readAhead);
+
   if (bytesRemaining > 0) {
     asio::read(mSocket, responseBuf, asio::transfer_exactly(bytesRemaining), e);
 

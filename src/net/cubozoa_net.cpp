@@ -1,4 +1,5 @@
 #include "cbz_pch.h"
+
 #include "cubozoa/net/cubozoa_net_http.h"
 
 #ifdef WEBGPU_BACKEND_WGPU
@@ -129,51 +130,10 @@ Address serverAddress("localhost");
 Port port = 13;
 
 Result initClient() {
-  return Result::eSuccess;
   sLogger = spdlog::stdout_color_mt("cbzclient");
   sLogger->set_level(spdlog::level::trace);
   sLogger->set_pattern("[%^%l%$][NET] %v");
 
-  {
-    Endpoint testEndpoint = {
-        Address("localhost"),
-        Port(6000),
-    };
-    std::unique_ptr<net::IHttpClient> httpClient =
-        httpClientCreate(testEndpoint);
-
-    nlohmann::json body;
-    body["source"] =
-        "import playground;\n\nfloat4 imageMain(uint2 dispatchThreadID, int2 "
-        "screenSize)\n{\n    return float4(0.3, 0.7, 0.55, 1.0);\n";
-    body["entryPoint"] = "imageMain";
-    body["target"] = "WGSL";
-
-    net::HttpResponse res =
-        httpClient->postJson("/compile", body.dump().c_str());
-
-    nlohmann::json json = nlohmann::json::parse(res.readAsCString());
-    spdlog::info("Reflection:\n {}", json["reflection"].dump());
-  }
-
-  if (false) {
-    Endpoint testEndpoint = {
-        Address("jsonplaceholder.typicode.com"),
-        Port(80),
-    };
-    std::unique_ptr<net::IHttpClient> httpClient =
-        httpClientCreate(testEndpoint);
-    net::HttpResponse res = httpClient->get("/todos/4");
-
-    nlohmann::json json = nlohmann::json::parse(res.readAsCString());
-    spdlog::info("Json:\n {}", json.dump());
-  }
-
-  exit(0);
-  // Endpoint endpoint = {serverAddress, port};
-  //
-  // NetworkingContextNativeClient client;
-  // client.connect(endpoint.address.c_str(), port.c_str());
   return Result::eSuccess;
 }
 

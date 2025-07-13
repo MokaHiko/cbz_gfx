@@ -128,7 +128,7 @@ struct ShaderProgramCommand {
   std::vector<Binding> bindings;
 
   uint64_t sortKey;
-  uint32_t target;
+  uint8_t target;
 
   inline uint32_t getDescriptorHash() const { return sortKey & 0xFFFFFFFF; }
 };
@@ -159,7 +159,7 @@ public:
                       const void *data = nullptr) = 0;
 
   virtual void uniformBufferUpdate(UniformHandle uh, void *data,
-                                   uint32_t num = 0) = 0;
+                                   uint16_t num = 0) = 0;
 
   virtual void uniformBufferDestroy(UniformHandle uh) = 0;
 

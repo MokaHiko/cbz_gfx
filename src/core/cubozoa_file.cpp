@@ -1,7 +1,7 @@
 #include "cubozoa_file.h"
-#include "cbz_pch.h"
 
 #include <fstream>
+#include <sstream>
 
 namespace cbz {
 

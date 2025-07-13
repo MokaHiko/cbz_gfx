@@ -14,7 +14,7 @@ static std::shared_ptr<spdlog::logger> sLogger;
 
 // Input
 static std::array<bool, static_cast<uint32_t>(Key::eCount)> sKeyMap;
-static void InputKeyCallback(GLFWwindow *_, int key, int, int action, int) {
+static void InputKeyCallback(GLFWwindow *, int key, int, int action, int) {
   if (key == GLFW_KEY_UNKNOWN)
     return;
 
@@ -498,7 +498,7 @@ void VertexLayout::begin(VertexStepMode mode) {
   stride = 0;
 }
 
-void VertexLayout::push_attribute(VertexAttributeType _, VertexFormat format) {
+void VertexLayout::push_attribute(VertexAttributeType, VertexFormat format) {
   attributes.push_back(
       {format, stride, static_cast<uint32_t>(attributes.size())});
 
@@ -506,8 +506,7 @@ void VertexLayout::push_attribute(VertexAttributeType _, VertexFormat format) {
 }
 
 void VertexLayout::end() {
-  for (VertexAttribute &_ : attributes) {
-  }
+  // for (VertexAttribute & attrib : attributes) { }
 }
 
 bool VertexLayout::operator==(const VertexLayout &other) const {

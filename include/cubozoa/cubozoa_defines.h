@@ -434,7 +434,7 @@ public:
 
   std::vector<VertexAttribute> attributes;
   VertexStepMode stepMode;
-  uint64_t stride;
+  uint32_t stride;
 };
 
 // @note Handles may be recycled when destroyed

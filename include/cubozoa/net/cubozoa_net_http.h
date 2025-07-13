@@ -20,6 +20,7 @@ enum class HttpResult {
 
   eHttpCount = 599,
   eInvalidJsonData,
+  eBufferOverflow,
 };
 enum class HttpContentType {
   eNone,

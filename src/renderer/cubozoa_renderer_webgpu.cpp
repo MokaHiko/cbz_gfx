@@ -47,6 +47,8 @@ static uint32_t IndexFormatGetSize(WGPUIndexFormat format) {
     return 0;
     break;
   }
+
+  return 0;
 }
 
 static std::shared_ptr<spdlog::logger> sLogger;
@@ -75,7 +77,7 @@ static std::vector<cbz::ComputeProgramWebGPU> sComputePrograms;
 
 static std::pair<cbz::Result, WGPURequiredLimits>
 CheckAndCreateRequiredLimits(WGPUAdapter adapter) {
-  WGPUSupportedLimits supportedLimits;
+  WGPUSupportedLimits supportedLimits = {};
   wgpuAdapterGetLimits(adapter, &supportedLimits);
 
   WGPURequiredLimits requiredLimits = {};
@@ -198,7 +200,7 @@ public:
                                            uint16_t num,
                                            const void *data = nullptr) override;
 
-  void uniformBufferUpdate(UniformHandle uh, void *data, uint32_t num) override;
+  void uniformBufferUpdate(UniformHandle uh, void *data, uint16_t num) override;
 
   void uniformBufferDestroy(UniformHandle uh) override;
 
@@ -632,8 +634,12 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
 
       int bindingIndex = bindingJson.value("index", -1);
       if (typeKind != "struct") {
+        uint32_t globalIndex = offsets + bindingIndex;
+        if (globalIndex > std::numeric_limits<uint8_t>::max()) {
+            sLogger->error("Binding index out of range {}", globalIndex);
+        }
         mBindingDescs.push_back({});
-        mBindingDescs.back().index = offsets + bindingIndex;
+        mBindingDescs.back().index = static_cast<uint8_t>(globalIndex);
         mBindingDescs.back().name = name;
 
         isNewBinding = true;
@@ -1149,7 +1155,7 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   sLogger->set_pattern("[%^%l%$][CBZ|RENDERER|WGPU] %v");
 
   net::Endpoint cbzEndPoint = {
-      net::Address("localhost"),
+      net::Address("192.168.1.7"),
       net::Port(6000),
   };
 
@@ -1232,8 +1238,7 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   size_t adapterFeatureCount = wgpuAdapterEnumerateFeatures(adapter, nullptr);
   std::vector<WGPUFeatureName> adapterFeatures(adapterFeatureCount);
   wgpuAdapterEnumerateFeatures(adapter, adapterFeatures.data());
-  for (WGPUFeatureName _ : adapterFeatures) {
-  }
+  // for (WGPUFeatureName _ : adapterFeatures) { }
 
   WGPUAdapterProperties adapterProperties;
   wgpuAdapterGetProperties(adapter, &adapterProperties);
@@ -1374,13 +1379,13 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
       wgpuDeviceCreateCommandEncoder(sDevice, &cmdEncoderDesc);
 
   // Target struct
-  uint8_t target = -1;
+  uint8_t target = std::numeric_limits<uint8_t>::max();
   TargetType targetType = TargetType::eNone;
   // Attachments if graphics
   // WGPURenderPassEncoder renderPassEncoder = nullptr;
   // WGPUComputePassEncoder computePassEncoder = nullptr;
 
-  uint64_t targetSortKey = -1;
+  uint64_t targetSortKey = std::numeric_limits<uint64_t>::max();
 
   uint32_t vertexCount = 0;
   uint32_t indexCount = 0;
@@ -1642,7 +1647,7 @@ Result RendererContextWebGPU::uniformBufferCreate(UniformHandle uh,
 }
 
 void RendererContextWebGPU::uniformBufferUpdate(UniformHandle uh, void *data,
-                                                uint32_t num) {
+                                                uint16_t num) {
   sUniformBuffers[uh.idx].update(data, num);
 }
 
