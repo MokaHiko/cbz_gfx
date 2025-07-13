@@ -13,6 +13,17 @@ FetchContent_MakeAvailable(spdlog)
 if (NOT EMSCRIPTEN)
     add_subdirectory(third_party/glfw)
     add_subdirectory(third_party/wgpu-native)
+
+    set(ASIO_BUILD_EXAMPLES OFF CACHE INTERNAL "")
+    set(ASIO_BUILD_TESTS OFF CACHE INTERNAL "")
+    set(ASIO_BUILD_DOCS OFF CACHE INTERNAL "")
+    FetchContent_Declare(
+      asio
+      GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+      GIT_TAG master
+    )
+
+    FetchContent_MakeAvailable(asio)
 else()
     # Create a mock 'glfw' target that just sets the `-sUSE_GLFW=3` link option:
     add_library(glfw INTERFACE)
@@ -22,10 +33,6 @@ add_subdirectory(third_party/glfw3webgpu)
 add_subdirectory(third_party/imgui)
 add_subdirectory(third_party/glm)
 add_subdirectory(third_party/murmurhash)
-
-add_library(asio INTERFACE)
-target_include_directories(asio INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/asio/asio/include)
-target_compile_definitions(asio INTERFACE ASIO_STANDALONE)
 
 add_library(${PROJECT_NAME}
             src/core/cubozoa_memory.cpp
@@ -42,14 +49,17 @@ add_library(${PROJECT_NAME}
 
             src/cubozoa.cpp)
 
-target_link_libraries(${PROJECT_NAME} PUBLIC spdlog glfw glm webgpu glfw3webgpu imgui murmurhash asio)
+target_link_libraries(${PROJECT_NAME} PUBLIC spdlog glfw glm webgpu glfw3webgpu imgui murmurhash)
 
 if(EMSCRIPTEN)
     target_compile_definitions(${PROJECT_NAME} PUBLIC WEBGPU_BACKEND_EMSCRIPTEN)
 else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ASIO_STANDALONE)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+      ${asio_SOURCE_DIR}/asio/include
+    )
 
     target_compile_definitions(${PROJECT_NAME} PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
-
 endif()
 
 target_include_directories(${PROJECT_NAME} PUBLIC include)
