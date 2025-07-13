@@ -1,68 +1,41 @@
 #include "cubozoa/cubozoa.h"
 
-#include "cbz_pch.h"
-#include "cubozoa/cubozoa_defines.h"
 #include "cubozoa/net/cubozoa_net.h"
 #include "renderer/cubozoa_irenderer_context.h"
-#include "spdlog/spdlog.h"
 
 #include <GLFW/glfw3.h>
 #include <murmurhash/MurmurHash3.h>
 
 namespace cbz {
 
-void VertexLayout::begin(VertexStepMode mode) {
-  if (attributes.size() > 0 || stride != 0) {
-    spdlog::warn(
-        "VertexLayout::begin() called with non empty attribute array!");
-  }
+// Application
+static GLFWwindow *sWindow;
+static std::shared_ptr<spdlog::logger> sLogger;
 
-  stepMode = mode;
-  stride = 0;
-}
+// Input
+static std::array<bool, static_cast<uint32_t>(Key::eCount)> sKeyMap;
+static void InputKeyCallback(GLFWwindow *_, int key, int, int action, int) {
+  if (key == GLFW_KEY_UNKNOWN)
+    return;
 
-void VertexLayout::push_attribute(VertexAttributeType _, VertexFormat format) {
-  attributes.push_back(
-      {format, stride, static_cast<uint32_t>(attributes.size())});
-
-  stride += VertexFormatGetSize(format);
-}
-
-void VertexLayout::end() {
-  for (VertexAttribute &_ : attributes) {
+  if (action == GLFW_PRESS) {
+    sKeyMap[key] = true;
+  } else if (action == GLFW_RELEASE) {
+    sKeyMap[key] = false;
   }
 }
 
-bool VertexLayout::operator==(const VertexLayout &other) const {
-  if (attributes.size() != other.attributes.size()) {
+void InputInit() { glfwSetKeyCallback(sWindow, InputKeyCallback); }
+
+bool IsKeyDown(Key key) {
+  if (static_cast<uint32_t>(key) >= static_cast<uint32_t>(Key::eCount)) {
     return false;
   }
 
-  if (stride != other.stride) {
-    return false;
-  }
-
-  if ((uint32_t)stepMode != (uint32_t)other.stepMode) {
-    return false;
-  }
-
-  for (uint64_t i = 0; i < attributes.size(); i++) {
-    if (attributes[i].shaderLocation != other.attributes[i].shaderLocation) {
-      return false;
-    };
-
-    if (attributes[i].format != other.attributes[i].format) {
-      return false;
-    };
-  }
-
-  return true;
+  return sKeyMap[static_cast<uint32_t>(key)];
 }
 
-bool VertexLayout::operator!=(const VertexLayout &other) const {
-  return !(*this == other);
-}
-
+// Renderer
 struct TransformData {
   float transform[16];
   float view[16];
@@ -72,9 +45,6 @@ struct TransformData {
   float inverseView[16];
 };
 
-static GLFWwindow *sWindow;
-static std::shared_ptr<spdlog::logger> sLogger;
-
 static std::vector<ShaderProgramCommand> sShaderProgramCmds;
 static uint32_t sNextShaderProgramCmdIdx;
 
@@ -83,7 +53,7 @@ static std::unique_ptr<cbz::IRendererContext> sRenderer;
 static StructuredBufferHandle sTransformSBH;
 static std::array<TransformData, MAX_COMMAND_SUBMISSIONS> sTransforms;
 
-Result init(InitDesc initDesc) {
+Result Init(InitDesc initDesc) {
   Result result = Result::eSuccess;
 
   sLogger = spdlog::stdout_color_mt("cbz");
@@ -121,6 +91,8 @@ Result init(InitDesc initDesc) {
     glfwTerminate();
     return Result::eGLFWError;
   }
+
+  InputInit();
 
   sRenderer = RendererContextCreate();
   if (sRenderer->init(initDesc.width, initDesc.height, sWindow) !=
@@ -400,7 +372,8 @@ void TransformSet(float *transform) {
          sizeof(float) * 16);
 }
 
-void Submit(uint8_t _, GraphicsProgramHandle gph) {
+void Submit(uint8_t target, GraphicsProgramHandle gph) {
+  // TODO : Target progrma compatiblity check.
   if (sShaderProgramCmds.size() > MAX_COMMAND_SUBMISSIONS) {
     sLogger->error("Application has exceeded maximum draw calls! Consider "
                    "batching or instancing.");
@@ -417,9 +390,8 @@ void Submit(uint8_t _, GraphicsProgramHandle gph) {
 
   ShaderProgramCommand *currentCommand =
       &sShaderProgramCmds[sNextShaderProgramCmdIdx];
-  currentCommand->programType = ProgramType::eGraphics;
+  currentCommand->programType = TargetType::eGraphics;
 
-  // TODO: Submit to target array
   uint32_t uniformHash;
   MurmurHash3_x86_32(currentCommand->bindings.data(),
                      static_cast<uint32_t>(currentCommand->bindings.size()) *
@@ -427,12 +399,50 @@ void Submit(uint8_t _, GraphicsProgramHandle gph) {
                      0, &uniformHash);
 
   currentCommand->program.graphics.ph = gph;
+
+  currentCommand->target = target;
   currentCommand->sortKey =
       (uint64_t)(gph.idx & 0xFFFF) << 48 |
       (uint64_t)(currentCommand->program.graphics.vbh.idx & 0xFFFF) << 32 |
       (uint64_t)(uniformHash & 0xFFFFFFFF);
 
-  currentCommand->id = static_cast<uint32_t>(sShaderProgramCmds.size());
+  sNextShaderProgramCmdIdx++;
+}
+
+void Submit(uint8_t target, ComputeProgramHandle cph, uint32_t x, uint32_t y,
+            uint32_t z) {
+  // TODO : Target progrma compatiblity check.
+  if (sShaderProgramCmds.size() > MAX_COMMAND_SUBMISSIONS) {
+    sLogger->error("Application has exceeded maximum submits calls!");
+    return;
+  }
+
+  if (sNextShaderProgramCmdIdx >= MAX_COMMAND_BINDINGS) {
+    sLogger->error("Submit called exceeding max uniform binds {}",
+                   sNextShaderProgramCmdIdx);
+    return;
+  }
+
+  ShaderProgramCommand *currentCommand =
+      &sShaderProgramCmds[sNextShaderProgramCmdIdx];
+  currentCommand->programType = TargetType::eCompute;
+
+  uint32_t uniformHash;
+  MurmurHash3_x86_32(currentCommand->bindings.data(),
+                     static_cast<uint32_t>(currentCommand->bindings.size()) *
+                         sizeof(Binding),
+                     0, &uniformHash);
+
+  currentCommand->program.compute.x = x;
+  currentCommand->program.compute.y = y;
+  currentCommand->program.compute.z = z;
+  currentCommand->program.compute.ph = cph;
+
+  currentCommand->target = target;
+  currentCommand->sortKey =
+      (uint64_t)(cph.idx & 0xFFFF) << 48 |
+      // (uint64_t)(currentCommand->program.graphics.vbh.idx & 0xFFFF) << 32 |
+      (uint64_t)(uniformHash & 0xFFFFFFFF);
 
   sNextShaderProgramCmdIdx++;
 }
@@ -447,6 +457,10 @@ bool Frame() {
   std::sort(sShaderProgramCmds.begin(),
             sShaderProgramCmds.begin() + submissionCount,
             [](const ShaderProgramCommand &a, const ShaderProgramCommand &b) {
+              if (a.target != b.target) {
+                return a.target < b.target;
+              }
+
               return a.sortKey < b.sortKey;
             });
 
@@ -455,7 +469,7 @@ bool Frame() {
   // Clear submissions
   for (uint32_t i = 0; i < sNextShaderProgramCmdIdx; i++) {
     sShaderProgramCmds[i].bindings.clear();
-    sShaderProgramCmds[i].programType = ProgramType::eNone;
+    sShaderProgramCmds[i].programType = TargetType::eNone;
     sShaderProgramCmds[i].sortKey = std::numeric_limits<uint64_t>::max();
   }
   sNextShaderProgramCmdIdx = 0;
@@ -472,6 +486,58 @@ void Shutdown() {
 
   glfwDestroyWindow(sWindow);
   glfwTerminate();
+}
+
+void VertexLayout::begin(VertexStepMode mode) {
+  if (attributes.size() > 0 || stride != 0) {
+    spdlog::warn(
+        "VertexLayout::begin() called with non empty attribute array!");
+  }
+
+  stepMode = mode;
+  stride = 0;
+}
+
+void VertexLayout::push_attribute(VertexAttributeType _, VertexFormat format) {
+  attributes.push_back(
+      {format, stride, static_cast<uint32_t>(attributes.size())});
+
+  stride += VertexFormatGetSize(format);
+}
+
+void VertexLayout::end() {
+  for (VertexAttribute &_ : attributes) {
+  }
+}
+
+bool VertexLayout::operator==(const VertexLayout &other) const {
+  if (attributes.size() != other.attributes.size()) {
+    return false;
+  }
+
+  if (stride != other.stride) {
+    return false;
+  }
+
+  if ((uint32_t)stepMode != (uint32_t)other.stepMode) {
+    return false;
+  }
+
+  for (uint64_t i = 0; i < attributes.size(); i++) {
+    if (attributes[i].shaderLocation != other.attributes[i].shaderLocation) {
+      return false;
+    };
+
+    if (attributes[i].format != other.attributes[i].format) {
+      return false;
+    };
+  }
+
+  return true;
+}
+
+bool VertexLayout::operator!=(const VertexLayout &other) const {
+  return !(*this == other);
 }
 
 } // namespace cbz

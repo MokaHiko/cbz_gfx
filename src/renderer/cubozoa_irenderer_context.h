@@ -123,12 +123,12 @@ struct ShaderProgramCommand {
       ComputeProgramHandle ph;
     } compute;
   } program;
-  ProgramType programType;
+  TargetType programType;
 
   std::vector<Binding> bindings;
 
   uint64_t sortKey;
-  uint32_t id;
+  uint32_t target;
 
   inline uint32_t getDescriptorHash() const { return sortKey & 0xFFFFFFFF; }
 };

@@ -12,6 +12,10 @@ enum class NetworkStatus {
 };
 
 // Minimum renderer limits
+constexpr uint32_t MAX_TARGETS = 128;
+static_assert(MAX_TARGETS <= std::numeric_limits<uint32_t>::max(),
+              "MAX_TARGETS must fit in a uint32_t");
+
 constexpr uint32_t MAX_COMMAND_SUBMISSIONS = 128;
 static_assert(MAX_COMMAND_SUBMISSIONS <= std::numeric_limits<uint32_t>::max(),
               "MAX_DRAW_CALLS must fit in a uint32_t");
@@ -380,7 +384,7 @@ enum class UniformType : uint32_t {
   eMat4,
 };
 
-enum class ProgramType : uint32_t {
+enum class TargetType : uint32_t {
   eNone,
   eGraphics,
   eCompute,

@@ -1,4 +1,6 @@
 #include "cubozoa/net/cubozoa_net_http.h"
+#include "asio/buffer.hpp"
+#include "spdlog/spdlog.h"
 
 #ifdef WEBGPU_BACKEND_WGPU
 #include <asio.hpp>
@@ -39,8 +41,9 @@ private:
   Type type;
 };
 
-HttpResponse::HttpResponse(HttpResult result, std::shared_ptr<Buffer> content)
-    : mResult(result), mContent(content) {}
+HttpResponse::HttpResponse(HttpResult result, HttpContentType type,
+                           Scope<Buffer> &&content)
+    : mResult(result), mType(type), mContent(std::move(content)) {}
 
 const char *HttpResponse::readAsCString() const {
   if (static_cast<uint32_t>(mResult) >= 400) {
@@ -52,8 +55,11 @@ const char *HttpResponse::readAsCString() const {
     return nullptr;
   }
 
-  if (mContent->getData()[mContent->getSize() - 1] != '\0') {
-    spdlog::warn("Response content is not a null terminated string!");
+  // if (mContent->getData()[mContent->getSize() - 1] != '\0') {
+  //   spdlog::warn("Response content is not a null terminated string!");
+  // }
+  if (mType != HttpContentType::eApplicationJson) {
+    spdlog::warn("Response content type is not of string!");
   }
 
   return reinterpret_cast<const char *>(mContent->getData());
@@ -122,7 +128,7 @@ HttpClientNative::~HttpClientNative() {
   nlohmann::json json = nlohmann::json::parse(jsonString);
   if (json.is_discarded()) {
     spdlog::error("Could not parse string into json!");
-    return {HttpResult::eInvalidJsonData, nullptr};
+    return {HttpResult::eInvalidJsonData};
   }
 
   const std::string &bodyString = json.dump();
@@ -146,41 +152,45 @@ HttpClientNative::sendRawRequest(const std::string &requestStr) {
 
   asio::streambuf responseBuf;
 
-  size_t bytes = asio::read_until(mSocket, responseBuf, "\r\n\r\n", e);
-  size_t contentLength = 0;
+  asio::read_until(mSocket, responseBuf, "\r\n\r\n", e);
+  size_t contentSize = 0;
   if (e && e != asio::error::eof) {
     spdlog::error("Read error: {}", e.message());
+    return {HttpResult::eNotFound};
   } else {
     std::istream responseStream(&responseBuf);
     std::string headerLine;
 
     while (std::getline(responseStream, headerLine) && headerLine != "\r") {
+      spdlog::info(headerLine);
       if (headerLine.rfind("Content-Length:", 0) == 0) {
         std::string val = headerLine.substr(15);
-        contentLength = std::stoul(val);
+        contentSize = std::stoul(val);
       }
 
       if (headerLine.rfind("Content-Type:", 0) == 0) {
         std::string val = headerLine.substr(13);
-        spdlog::info("Content Type: {}", val);
       }
     }
   }
 
-  if (bytes < contentLength) {
-    asio::read(mSocket, responseBuf,
-               asio::transfer_exactly(contentLength - responseBuf.size()), e);
+  uint32_t readAhead = responseBuf.size();
+  uint32_t bytesRemaining = contentSize - readAhead;
+  if (bytesRemaining > 0) {
+    asio::read(mSocket, responseBuf, asio::transfer_exactly(bytesRemaining), e);
 
     if (e && e != asio::error::eof) {
       spdlog::error("Read error: {}", e.message());
     }
   }
 
-  uint8_t *data = static_cast<uint8_t *>(malloc(contentLength));
-  memcpy((void *)data, responseBuf.data().data(), contentLength);
-  Ref<Buffer> contentBuffer = RefCreate<Buffer>(data, contentLength);
+  assert(responseBuf.size() == contentSize);
 
-  return {HttpResult::eOk, contentBuffer};
+  char *data = static_cast<char *>(malloc(contentSize));
+  asio::buffer_copy(asio::buffer(data, contentSize), responseBuf.data());
+
+  return {HttpResult::eOk, HttpContentType::eApplicationJson,
+          ScopeCreate<Buffer>(data, contentSize)};
 };
 
 #endif

@@ -3,11 +3,11 @@
 #include "GLFW/glfw3.h"
 
 #include "core/cubozoa_file.h"
-#include "cubozoa/cubozoa.h"
 #include "cubozoa/cubozoa_defines.h"
 #include "cubozoa/net/cubozoa_net_http.h"
 #include "cubozoa_irenderer_context.h"
 
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <webgpu/webgpu.h>
@@ -244,7 +244,7 @@ public:
                     uint32_t count) override;
 
 private:
-  [[nodiscard]] WGPUBindGroup findOrCreateBindGroup(const ShaderWebGPU *shader,
+  [[nodiscard]] WGPUBindGroup findOrCreateBindGroup(ShaderHandle sh,
                                                     uint32_t descriptorHash,
                                                     const Binding *bindings,
                                                     uint32_t bindingCount);
@@ -287,7 +287,6 @@ Result VertexBufferWebGPU::create(const VertexLayout &vertexLayout,
   }
 
   if (data) {
-    // TODO: Handle queue write buffer allignment.
     wgpuQueueWriteBuffer(sQueue, mBuffer, 0, data, size);
   }
 
@@ -403,7 +402,6 @@ void IndexBufferWebGPU::destroy() {
   }
 
   if (data) {
-    // TODO: Handle queue write buffer allignment.
     wgpuQueueWriteBuffer(sQueue, mBuffer, 0, data, size);
   }
 
@@ -1336,15 +1334,9 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   return Result::eSuccess;
 }
 
-static double lastTime = glfwGetTime();
-static double deltaTime = 0.0f;
-
 uint32_t frameCounter = 0;
 void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
                                          uint32_t count) {
-  deltaTime = glfwGetTime() - lastTime;
-  lastTime = glfwGetTime();
-
   WGPUSurfaceTexture surfaceTexture;
   wgpuSurfaceGetCurrentTexture(sSurface, &surfaceTexture);
   switch (surfaceTexture.status) {
@@ -1381,122 +1373,122 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
   WGPUCommandEncoder cmdEncoder =
       wgpuDeviceCreateCommandEncoder(sDevice, &cmdEncoderDesc);
 
-  WGPUComputePassDescriptor computePassDesc = {};
-  computePassDesc.nextInChain = nullptr;
-  computePassDesc.label = "computePassX";
-  computePassDesc.timestampWrites = nullptr;
+  // Target struct
+  uint8_t target = -1;
+  TargetType targetType = TargetType::eNone;
+  // Attachments if graphics
+  // WGPURenderPassEncoder renderPassEncoder = nullptr;
+  // WGPUComputePassEncoder computePassEncoder = nullptr;
 
-  WGPUComputePassEncoder computePassEncoder =
-      wgpuCommandEncoderBeginComputePass(cmdEncoder, &computePassDesc);
+  uint64_t targetSortKey = -1;
 
-  // TODO: Move to application
-  {
-    Binding imageBufferBinding = {};
-    imageBufferBinding.type = BindingType::eRWStructuredBuffer;
-    imageBufferBinding.value.storageBuffer.slot =
-        static_cast<uint8_t>(BufferSlot::e0);
-    imageBufferBinding.value.storageBuffer.valueType = UniformType::eVec4;
-    imageBufferBinding.value.storageBuffer.handle = {1};
-
-    Binding raytraceSettingsBind = {};
-    raytraceSettingsBind.type = BindingType::eUniformBuffer;
-    raytraceSettingsBind.value.uniformBuffer.handle = UniformHandle{1};
-    raytraceSettingsBind.value.uniformBuffer.valueType = UniformType::eVec4;
-
-    Binding cameraBinding = {};
-    cameraBinding.type = BindingType::eUniformBuffer;
-    cameraBinding.value.uniformBuffer.handle = UniformHandle{2};
-    cameraBinding.value.uniformBuffer.valueType = UniformType::eVec4;
-
-    const uint32_t w = 854;
-    const uint32_t h = 480;
-
-    struct {
-      uint32_t dim[4] = {w, h, frameCounter, 0};
-    } raytracingSettings;
-    UniformSet({1}, &raytracingSettings);
-
-    static float posZ = 0.0f;
-    posZ += (float)deltaTime * 0.15f;
-    struct {
-      float settings[4] = {1.0f, 0.0f, 0.0f, 0.0f}; // focal length
-      float position[4] = {0.0f, 0.0f, posZ, 0.0f};
-    } camera;
-
-    UniformSet({2}, &camera);
-
-    Binding computeUniforms[3]{imageBufferBinding, raytraceSettingsBind,
-                               cameraBinding};
-
-    const uint32_t x = uint32_t(w + 7) / 8;
-    const uint32_t y = uint32_t(h + 7) / 8;
-
-    for (int i = 0; i < 1; i++) {
-      const ComputeProgramWebGPU &computeProgram = sComputePrograms[0];
-
-      if (computeProgram.bind(computePassEncoder) != Result::eSuccess) {
-        continue;
-      }
-
-      uint32_t someHash = 1;
-      const WGPUBindGroup computeBindGroup =
-          findOrCreateBindGroup(&sShaders[computeProgram.getShader().idx],
-                                someHash, computeUniforms, 3);
-
-      if (!computeBindGroup) {
-        sLogger->error("Attempting to run compute pipeline without bindings!");
-        continue;
-      }
-
-      uint32_t offsets = 0;
-      wgpuComputePassEncoderSetBindGroup(computePassEncoder, 0,
-                                         computeBindGroup, 0, &offsets);
-
-      wgpuComputePassEncoderDispatchWorkgroups(computePassEncoder, x, y, 1);
-    }
-  }
-
-  wgpuComputePassEncoderEnd(computePassEncoder);
-  wgpuComputePassEncoderRelease(computePassEncoder);
-
-  WGPURenderPassColorAttachment renderPassColorAttachmentDesc = {};
-  renderPassColorAttachmentDesc.nextInChain = nullptr;
-  renderPassColorAttachmentDesc.view = surfaceTextureView;
-  // renderPassColorAttachmentDesc.resolveTarget ;
-  renderPassColorAttachmentDesc.loadOp = WGPULoadOp_Clear;
-  renderPassColorAttachmentDesc.storeOp = WGPUStoreOp_Store;
-  renderPassColorAttachmentDesc.clearValue = {0.0f, 0.0f, 0.0f, 1.0f};
-
-#ifndef WEBGPU_BACKEND_WGPU
-  renderPassColorAttachmentDesc.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
-#endif // NOT WEBGPU_BACKEND_WGPU
-
-  WGPURenderPassDescriptor renderPassDesc = {};
-  renderPassDesc.nextInChain = nullptr;
-  renderPassDesc.label = "RenderPassDescX";
-  renderPassDesc.colorAttachmentCount = 1;
-  renderPassDesc.colorAttachments = &renderPassColorAttachmentDesc;
-  renderPassDesc.depthStencilAttachment = nullptr;
-  renderPassDesc.occlusionQuerySet = nullptr;
-  renderPassDesc.timestampWrites = nullptr;
-
-  WGPURenderPassEncoder renderPassEncoder =
-      wgpuCommandEncoderBeginRenderPass(cmdEncoder, &renderPassDesc);
-
-  uint64_t lastRenderCommandID = -1;
   uint32_t vertexCount = 0;
-
-  bool drawIndexed = false;
   uint32_t indexCount = 0;
+  bool isIndexed = false;
+  WGPURenderPassEncoder renderPassEncoder = nullptr;
+
+  uint32_t dispatchX = 0;
+  uint32_t dispatchY = 0;
+  uint32_t dispatchZ = 0;
+  WGPUComputePassEncoder computePassEncoder = nullptr;
 
   for (uint32_t cmdIdx = 0; cmdIdx < count; cmdIdx++) {
     const ShaderProgramCommand &renderCmd = sortedCmds[cmdIdx];
 
-    if (lastRenderCommandID != renderCmd.sortKey) {
-      lastRenderCommandID = renderCmd.sortKey;
+    // TODO:
+    // End if different target
+    // Begin target
+
+    // Begin target encoder
+    if (target != renderCmd.target) {
+      target = renderCmd.target;
+      targetType = renderCmd.programType;
 
       switch (renderCmd.programType) {
-      case ProgramType::eGraphics: {
+
+      case TargetType::eCompute: {
+        WGPUComputePassDescriptor computePassDesc = {};
+        computePassDesc.nextInChain = nullptr;
+        computePassDesc.label = "computePassX";
+        computePassDesc.timestampWrites = nullptr;
+
+        computePassEncoder =
+            wgpuCommandEncoderBeginComputePass(cmdEncoder, &computePassDesc);
+      } break;
+
+      case TargetType::eGraphics: {
+        WGPURenderPassColorAttachment renderPassColorAttachmentDesc = {};
+        renderPassColorAttachmentDesc.nextInChain = nullptr;
+        renderPassColorAttachmentDesc.view = surfaceTextureView;
+        // renderPassColorAttachmentDesc.resolveTarget ;
+        renderPassColorAttachmentDesc.loadOp = WGPULoadOp_Clear;
+        renderPassColorAttachmentDesc.storeOp = WGPUStoreOp_Store;
+        renderPassColorAttachmentDesc.clearValue = {0.0f, 0.0f, 0.0f, 1.0f};
+
+#ifndef WEBGPU_BACKEND_WGPU
+        renderPassColorAttachmentDesc.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+#endif // NOT WEBGPU_BACKEND_WGPU
+
+        WGPURenderPassDescriptor renderPassDesc = {};
+        renderPassDesc.nextInChain = nullptr;
+        renderPassDesc.label = "RenderPassDescX";
+        renderPassDesc.colorAttachmentCount = 1;
+        renderPassDesc.colorAttachments = &renderPassColorAttachmentDesc;
+        renderPassDesc.depthStencilAttachment = nullptr;
+        renderPassDesc.occlusionQuerySet = nullptr;
+        renderPassDesc.timestampWrites = nullptr;
+
+        renderPassEncoder =
+            wgpuCommandEncoderBeginRenderPass(cmdEncoder, &renderPassDesc);
+      }
+
+      case TargetType::eNone: {
+      } break;
+      }
+    }
+
+    // Execute cmds
+    switch (targetType) {
+
+    case TargetType::eCompute: {
+      if (targetSortKey != renderCmd.sortKey) {
+        targetSortKey = renderCmd.sortKey;
+
+        const ComputeProgramWebGPU &computeProgram =
+            sComputePrograms[renderCmd.program.compute.ph.idx];
+
+        if (computeProgram.bind(computePassEncoder) != Result::eSuccess) {
+          continue;
+        }
+
+        const WGPUBindGroup computeBindGroup = findOrCreateBindGroup(
+            computeProgram.getShader(), renderCmd.getDescriptorHash(),
+            renderCmd.bindings.data(),
+            static_cast<uint32_t>(renderCmd.bindings.size()));
+
+        if (computeBindGroup) {
+          uint32_t offsets = 0;
+          wgpuComputePassEncoderSetBindGroup(computePassEncoder, 0,
+                                             computeBindGroup, 0, &offsets);
+        }
+
+        dispatchX = renderCmd.program.compute.x;
+        dispatchY = renderCmd.program.compute.y;
+        dispatchZ = renderCmd.program.compute.z;
+      }
+
+      wgpuComputePassEncoderDispatchWorkgroups(computePassEncoder, dispatchX,
+                                               dispatchY, dispatchZ);
+
+      wgpuComputePassEncoderEnd(computePassEncoder);
+      wgpuComputePassEncoderRelease(computePassEncoder);
+      computePassEncoder = nullptr;
+    } break;
+
+    case TargetType::eGraphics: {
+      if (targetSortKey != renderCmd.sortKey) {
+        targetSortKey = renderCmd.sortKey;
+
         const GraphicsProgramWebGPU &graphicsProgram =
             sGraphicsPrograms[renderCmd.program.graphics.ph.idx];
 
@@ -1505,7 +1497,7 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
 
         if (sShaders[graphicsProgram.getShader().idx].getVertexLayout() !=
             vb.getVertexLayout()) {
-          sLogger->warn("Incompatible vertex buffer and program layout for {}!",
+          sLogger->warn("Incompatible vertex buffer and program layout for {}",
                         HandleProvider<GraphicsProgramHandle>::getName(
                             renderCmd.program.graphics.ph));
           sLogger->warn("Discarding draw...");
@@ -1517,8 +1509,8 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
         }
 
         const WGPUBindGroup graphicsBindGroup = findOrCreateBindGroup(
-            &sShaders[graphicsProgram.getShader().idx],
-            renderCmd.getDescriptorHash(), renderCmd.bindings.data(),
+            graphicsProgram.getShader(), renderCmd.getDescriptorHash(),
+            renderCmd.bindings.data(),
             static_cast<uint32_t>(renderCmd.bindings.size()));
 
         if (graphicsBindGroup) {
@@ -1542,48 +1534,48 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
           }
 
           indexCount = ib.getIndexCount();
-          drawIndexed = true;
+          isIndexed = true;
         } else {
           indexCount = 0;
-          drawIndexed = false;
+          isIndexed = false;
         }
 
-      } break;
+        if (isIndexed) {
+          wgpuRenderPassEncoderDrawIndexed(renderPassEncoder, indexCount, 1, 0,
+                                           0, 0);
+        } else {
+          wgpuRenderPassEncoderDraw(renderPassEncoder, vertexCount, 1, 0, 0);
+        }
 
-      case ProgramType::eCompute: {
-      } break;
+        // TODO: Move to swapchain render target
+        ImGui_ImplWGPU_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
 
-      case ProgramType::eNone:
-        break;
+        ImGui::Begin("Profiling");
+        ImGui::Text("fps: %3.0f", ImGui::GetIO().Framerate);
+
+        static float vec[3];
+        ImGui::SliderFloat3("Color", vec, 0.0f, 100.0f);
+
+        ImGui::End();
+
+        ImGui::EndFrame();
+        ImGui::Render();
+        ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), renderPassEncoder);
+
+        wgpuRenderPassEncoderEnd(renderPassEncoder);
+        wgpuRenderPassEncoderRelease(renderPassEncoder);
+        renderPassEncoder = nullptr;
       };
-    }
 
-    if (drawIndexed) {
-      wgpuRenderPassEncoderDrawIndexed(renderPassEncoder, indexCount, 1, 0, 0,
-                                       0);
-    } else {
-      wgpuRenderPassEncoderDraw(renderPassEncoder, vertexCount, 1, 0, 0);
+    } break;
+
+    case TargetType::eNone: {
+      sLogger->critical("Uknown render target!");
+    } break;
     }
   }
-
-  ImGui_ImplWGPU_NewFrame();
-  ImGui_ImplGlfw_NewFrame();
-  ImGui::NewFrame();
-
-  ImGui::Begin("Profiling");
-  ImGui::Text("fps: %3.0f", ImGui::GetIO().Framerate);
-
-  static float vec[3];
-  ImGui::SliderFloat3("Color", vec, 0.0f, 100.0f);
-
-  ImGui::End();
-
-  ImGui::EndFrame();
-  ImGui::Render();
-  ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), renderPassEncoder);
-
-  wgpuRenderPassEncoderEnd(renderPassEncoder);
-  wgpuRenderPassEncoderRelease(renderPassEncoder);
 
   WGPUCommandBufferDescriptor cmdDesc = {};
   cmdDesc.nextInChain = nullptr;
@@ -1785,12 +1777,13 @@ void RendererContextWebGPU::shutdown() {
 }
 
 WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
-    const ShaderWebGPU *shader, uint32_t descriptorHash,
-    const Binding *bindings, uint32_t bindingCount) {
+    ShaderHandle sh, uint32_t descriptorHash, const Binding *bindings,
+    uint32_t bindingCount) {
   if (!bindingCount || !bindings) {
     return nullptr;
   }
 
+  const ShaderWebGPU *shader = &sShaders[sh.idx];
   const std::vector<BindingDesc> &shaderBindingDescs = shader->getBindings();
 
   if (sBindingGroups.find(descriptorHash) == sBindingGroups.end()) {
@@ -1819,8 +1812,10 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
                            });
 
           if (it == shaderBindingDescs.end()) {
-            sLogger->error("Bound program has no uniform binding named {}",
-                           HandleProvider<UniformHandle>::getName(uh));
+            sLogger->error(
+                "Shader program '{}' has no uniform binding named '{}'",
+                HandleProvider<ShaderHandle>::getName(sh),
+                HandleProvider<UniformHandle>::getName(uh));
             return nullptr;
           }
 
@@ -1851,9 +1846,7 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
           if (it == shaderBindingDescs.end()) {
             sLogger->error(
                 "Bound program has no storage binding named {}",
-                !HandleProvider<StructuredBufferHandle>::getName(sbh).empty()
-                    ? HandleProvider<StructuredBufferHandle>::getName(sbh)
-                    : "'<unnamed>'");
+                HandleProvider<StructuredBufferHandle>::getName(sbh));
             return nullptr;
           }
 
@@ -1884,8 +1877,10 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
         }
 
         if (it == shaderBindingDescs.end()) {
-          sLogger->error("Bound program has no uniform binding named {}",
-                         HandleProvider<TextureHandle>::getName(th));
+          sLogger->error(
+              "Shader program '{}' has no uniform binding named '{}'",
+              HandleProvider<ShaderHandle>::getName(sh),
+              HandleProvider<TextureHandle>::getName(th));
           return nullptr;
         }
 
@@ -1893,7 +1888,7 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
       } break;
 
       case BindingType::eSampler: {
-        SamplerHandle sh = bindings[i].value.sampler.handle;
+        SamplerHandle smplerHandle = bindings[i].value.sampler.handle;
 
         const auto &it = std::find_if(
             shaderBindingDescs.begin(), shaderBindingDescs.end(),
@@ -1902,21 +1897,22 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
             });
 
         if (it->type != BindingType::eSampler) {
-          sLogger->error("Bound program has uniform binding and type mismatch "
-                         "for sampler!");
+          sLogger->error("Shader program '{}' has type mismatch",
+                         HandleProvider<ShaderHandle>::getName(sh));
           return nullptr;
         }
 
         if (it == shaderBindingDescs.end()) {
-          sLogger->error("Bound program has no uniform binding named {}",
-                         "'sampler'"); // TODO: Change to name of sampler.
+          sLogger->error(
+              "Shader program '{}' has no uniform binding of type <Sampler>",
+              HandleProvider<ShaderHandle>::getName(sh));
           return nullptr;
         }
 
         WGPUBindGroupEntry entry = {};
         entry.binding = it->index;
         entry.nextInChain = nullptr;
-        entry.sampler = sSamplers[sh.idx];
+        entry.sampler = sSamplers[smplerHandle.idx];
         bindGroupEntries[i] = entry;
       } break;
 

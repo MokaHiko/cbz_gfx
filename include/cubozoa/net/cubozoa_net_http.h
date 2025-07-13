@@ -22,6 +22,7 @@ enum class HttpResult {
   eInvalidJsonData,
 };
 enum class HttpContentType {
+  eNone,
   eBinary,
   eApplicationJson,
 };
@@ -34,15 +35,23 @@ public:
   HttpResponse(HttpResponse &&) noexcept = default;
   HttpResponse &operator=(HttpResponse &&) noexcept = default;
 
-  HttpResponse(HttpResult result, std::shared_ptr<Buffer> content);
+  HttpResponse(HttpResult result, HttpContentType type = HttpContentType::eNone,
+               Scope<Buffer> &&content = nullptr);
 
   const char *readAsCString() const;
-  inline uint32_t getSize() const { return mContent->getSize(); };
+  inline uint32_t getSize() const {
+    if (!mContent) {
+      return 0;
+    }
+    return mContent->getSize();
+  };
+
   inline HttpResult getResult() const { return mResult; }
 
 private:
   HttpResult mResult;
-  Ref<Buffer> mContent;
+  HttpContentType mType;
+  Scope<Buffer> mContent;
 };
 
 CBZ_API class IHttpClient {

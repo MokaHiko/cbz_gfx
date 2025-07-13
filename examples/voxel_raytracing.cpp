@@ -67,10 +67,10 @@ struct ColorRGBA8 {
 static constexpr uint32_t kWidth = 854;
 static constexpr uint32_t kHeight = 480;
 
-class Cubozoa {
+class RTWeekend {
 public:
   void init(cbz::NetworkStatus netStatus = cbz::NetworkStatus::eClient) {
-    if (cbz::Init({"Cubozoa", kWidth, kHeight, netStatus}) !=
+    if (cbz::Init({"RTWeekend", kWidth, kHeight, netStatus}) !=
         cbz::Result::eSuccess) {
       exit(0);
     }
@@ -244,7 +244,7 @@ int main(int argc, char **argv) {
     printf("%s", argv[i]);
   }
 
-  Cubozoa app = {};
+  RTWeekend app = {};
 
   if (argc > 1) {
     app.init(cbz::NetworkStatus::eHost);
@@ -260,7 +260,7 @@ int main(int argc, char **argv) {
   emscripten_set_main_loop_arg(
       [](void *userData) {
         static int i = 0;
-        Cubozoa *app = reinterpret_cast<Cubozoa *>(userData);
+        RTWeekend *app = reinterpret_cast<RTWeekend *>(userData);
         app->update();
       },
       (void *)&app, // value sent to the 'userData' arg of the callback

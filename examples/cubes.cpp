@@ -1,4 +1,3 @@
-#include "cubozoa/cubozoa_defines.h"
 #include <cubozoa/cubozoa.h>
 
 #ifdef __EMSCRIPTEN__
@@ -13,7 +12,7 @@
 
 #include <GLFW/glfw3.h>
 
-std::vector<float> vertices = {
+std::vector<float> sVertices = {
     // x,   y,     z,   normal,           uv
     -1.0f, 1.0f,  0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, // Vertex 1
     1.0f,  1.0f,  0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, // Vertex 2
@@ -26,7 +25,7 @@ std::vector<uint16_t> indices = {
     0, 2, 3  // Triangle #1 connects points #0, #2 and #3
 };
 
-struct Color {
+struct ColorRGBA8 {
   uint8_t r;
   uint8_t g;
   uint8_t b;
@@ -40,7 +39,7 @@ class Cubes {
 public:
   void init(cbz::NetworkStatus netStatus = cbz::NetworkStatus::eClient) {
 
-    if (cbz::init({"Cubes", kWidth, kHeight, netStatus}) !=
+    if (cbz::Init({"Cubes", kWidth, kHeight, netStatus}) !=
         cbz::Result::eSuccess) {
       exit(0);
     }
@@ -59,7 +58,7 @@ public:
     layout.end();
 
     mQuadVBH = cbz::VertexBufferCreate(
-        layout, static_cast<uint32_t>(vertices.size()), vertices.data());
+        layout, static_cast<uint32_t>(sVertices.size()), sVertices.data());
 
     mQuadIBH = cbz::IndexBufferCreate(cbz::IndexFormat::eUint16,
                                       static_cast<uint32_t>(indices.size()),
@@ -68,12 +67,12 @@ public:
     mAlbedoTH = cbz::Texture2DCreate(cbz::TextureFormat::eRGBA8Unorm, kWidth,
                                      kHeight, "albedo");
 
-    static std::array<Color, kWidth * kHeight> blit = {};
+    static std::array<ColorRGBA8, kWidth * kHeight> blit = {};
     for (uint32_t y = 0; y < kHeight; y++) {
       for (uint32_t x = 0; x < kWidth; x++) {
         blit[y * kWidth + x] =
-            Color{static_cast<uint8_t>(x * 255 / (kWidth - 1)),
-                  static_cast<uint8_t>(y * 255 / (kHeight - 1)), 0, 255};
+            ColorRGBA8{static_cast<uint8_t>(x * 255 / (kWidth - 1)),
+                       static_cast<uint8_t>(y * 255 / (kHeight - 1)), 0, 255};
       }
     }
 
