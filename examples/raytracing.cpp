@@ -9,7 +9,6 @@
 // - Camera controls: WASD for horizontal movement, Space/Shift for vertical
 // movement
 // - Output written to a structured buffer as RGBA32F, then blitted to screen
-//
 // Purpose:
 // - Demonstrates compute-based rendering pipeline
 // - Serves as a reference for structured buffer usage, compute dispatch, and
@@ -86,7 +85,7 @@ public:
 
     // --- Blit Pipeline Setup ---
     // Create blit program
-    mBlitSH = cbz::ShaderCreate("assets/shaders/blit.slang");
+    mBlitSH = cbz::ShaderCreate("shaders/blit.spirv");
     mBlitPH = cbz::GraphicsProgramCreate(mBlitSH, "blit_program");
 
     // Create vertex layout
@@ -114,7 +113,7 @@ public:
 
     // --- Voxel Ray Tracing Setup ---
     // Create raytracing compute program
-    mRaytracingSH = cbz::ShaderCreate("assets/shaders/voxel_raytracing.slang",
+    mRaytracingSH = cbz::ShaderCreate("shaders/voxel_raytracing.spirv",
                                       "raytracing_shader");
     mRaytracingPH = cbz::ComputeProgramCreate(mRaytracingSH);
 

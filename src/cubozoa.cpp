@@ -60,21 +60,21 @@ Result Init(InitDesc initDesc) {
   sLogger->set_level(spdlog::level::trace);
   sLogger->set_pattern("[%^%l%$][CBZ] %v");
 
-  switch (initDesc.netStatus) {
-  case NetworkStatus::eClient:
-    result = net::initClient();
-    break;
-  case NetworkStatus::eHost:
-    result = net::initServer();
-    break;
-  case NetworkStatus::eNone:
-    result = Result::eNetworkFailure;
-    break;
-  }
+  //switch (initDesc.netStatus) {
+  //case NetworkStatus::eClient:
+  //  result = net::initClient();
+  //  break;
+  //case NetworkStatus::eHost:
+  //  result = net::initServer();
+  //  break;
+  //case NetworkStatus::eNone:
+  //  result = Result::eNetworkFailure;
+  //  break;
+  //}
 
-  if (result != Result::eSuccess) {
-    return result;
-  };
+  //if (result != Result::eSuccess) {
+  //  return result;
+  //};
 
   if (glfwInit() != GLFW_TRUE) {
     sLogger->critical("Failed to initialize glfw!");

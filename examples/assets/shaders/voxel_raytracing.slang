@@ -6,11 +6,11 @@ namespace cbz
 
 #define CBZ_DECLARE_TEXTURE_1 [vk::binding(4)]
 #define CBZ_DECLARE_TEXTURE_2 [vk::binding(6)]
-static const float32_t PI = 3.14159265359;
+public static const float32_t PI = 3.14159265359;
 
 // Uniforms
-typedef float4 Vec4;
-typedef uint4 UVec4;
+public typedef float4 Vec4;
+public typedef uint4 UVec4;
 
 static uint32_t sRandState;
 static bool sFirstRandom = true;
@@ -244,6 +244,7 @@ public struct LambertianMaterial : IMaterial
 
     public RayHit scatter(float3 p, float3 normal, Ray ray)
     {
+        // Diffuse
         RayHit hit;
 
         float3 direction = normal + rngNextVec3InUnitSphere();
@@ -273,6 +274,7 @@ public struct MetallicMaterial : IMaterial
 
     public RayHit scatter(float3 p, float3 normal, Ray ray)
     {
+        // Reflect
         RayHit hit;
 
         hit.nextRay = Ray(float3(p + normal * EPSILON), reflect(ray.getDirection(), normal));
@@ -286,8 +288,52 @@ public struct MetallicMaterial : IMaterial
     private float _padding;
 };
 
+public struct DielectricMaterial : IMaterial
+{
+    __init(float refractiveIndex)
+    {
+        mRefractiveIndex = refractiveIndex;
+    }
+
+    public RayHit scatter(float3 p, float3 normal, Ray ray)
+    {
+        RayHit hit;
+
+        // Determine if the ray is inside the object
+        bool isInside = dot(ray.getDirection(), normal) > 0.0f;
+        float3 outwardNormal = isInside ? -normal : normal;
+
+        float eta = isInside ? 1.0f / mRefractiveIndex : mRefractiveIndex;
+
+        float cosTheta = dot(-ray.getDirection(), outwardNormal);
+        float sinTheta = sqrt(max(0.0f, 1.0f - cosTheta * cosTheta));
+
+        if (sinTheta * eta > 1.0f) {
+            // Total internal reflection
+            float3 reflectDir = reflect(ray.getDirection(), outwardNormal);
+            hit.nextRay = Ray(p + reflectDir * EPSILON, reflectDir);
+        } else {
+            // Refraction
+            float3 outPerp = eta * (ray.getDirection() + cosTheta * outwardNormal);
+            float3 outPar = -sqrt(max(0.0f, 1.0f - dot(outPerp, outPerp))) * outwardNormal;
+            float3 refractedDir = outPerp + outPar;
+
+            hit.nextRay = Ray(p + refractedDir * EPSILON, refractedDir);
+        }
+
+        hit.color = float3(0.95f); // Slight attenuation
+        hit.shouldContinue = true;
+
+        return hit;
+    }
+
+    private float mRefractiveIndex;
+};
+
 static const IMaterial[] gMaterials = {
-    LambertianMaterial(float3(0.8f, 0.2f, 0.9f)),
+    DielectricMaterial(1.33f),
+    //LambertianMaterial(float3(0.8f, 0.2f, 0.9f)),
+
     LambertianMaterial(float3(0.5f, 0.5f, 0.5f)),
 
     MetallicMaterial(float3(0.9f, 0.9f, 0.9f)),
@@ -296,7 +342,7 @@ static const IMaterial[] gMaterials = {
 
 static const SDFTorus myTorus = SDFTorus(float3(8.0, 1, 1.0), 2, 1.0);
 static const SDFShape[4] gShapes = {
-    SDFSphere(float3(4, 1.0, -2.0), 1),
+    SDFSphere(float3(4, 1.0, 6.0), 2),
     SDFSphere(float3(0.0, -100.5, -1.0), 100.0),
 
     SDFSphere(float3(0.0, 3.5, -3.0), 2),
@@ -321,7 +367,6 @@ static const RenderableSDF[] renderables = {
     RenderableSDF(1, 1),
     RenderableSDF(2, 2),
     RenderableSDF(3, 3),
-    
     RenderableSDF(4, 3),
 };
 
@@ -426,7 +471,7 @@ RayHit Raycast(Ray ray)
 // TODO: Take Control of Graphics & Compute mains
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void computeMain(uint2 gInvocationId: SV_DispatchThreadID)
+void main(uint2 gInvocationId: SV_DispatchThreadID)
 {
     uint32_t x = gInvocationId.x;
     uint32_t y = gInvocationId.y;

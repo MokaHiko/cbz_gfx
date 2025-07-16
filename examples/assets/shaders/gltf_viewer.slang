@@ -42,8 +42,6 @@ public struct Vertex
     public float3 position;
     public float3 normal;
     public float2 uv;
-
-    uint32_t drawID : SV_VulkanInstanceID;
 };
 
 struct VOut
@@ -57,7 +55,6 @@ struct VOut
 VOut vertexMain(Vertex in)
 {
     VOut output;
-    output.position = mul(CBZ_TRANSFORM, float4(in.position.xy, 0.0f, 1.0f));
     output.normal = in.normal;
     output.uv = in.uv;
     return output;

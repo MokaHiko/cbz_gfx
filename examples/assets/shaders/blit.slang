@@ -35,15 +35,14 @@ public struct SampledTexture {
 
 }; // namespace cbz
 
-#define CBZ_TRANSFORM cbz::transforms[in.drawID].model
+//#define CBZ_TRANSFORM cbz::transforms[in.drawID].model
 
-public struct Vertex
+struct Vertex
 {
-    public float3 position;
-    public float3 normal;
-    public float2 uv;
-
-    uint32_t drawID : SV_VulkanInstanceID;
+    float3 position;
+    float3 normal;
+    float2 uv;
+    //uint32_t drawID : SV_InstanceID;
 };
 
 struct VOut
@@ -57,7 +56,7 @@ struct VOut
 VOut vertexMain(Vertex in)
 {
     VOut output;
-    output.position = mul(CBZ_TRANSFORM, float4(in.position.xy, 0.0f, 1.0f));
+    output.position = float4(in.position.xy, 0.0f, 1.0f);
     output.normal = in.normal;
     output.uv = in.uv;
     return output;
@@ -76,5 +75,5 @@ float4 fragmentMain(VOut in) : SV_Target
     uint32_t y = uint32_t(in.uv.y * float(height));
     uint32_t index = y * width + x;
 
-    return imageBuffer[index];
+    return imageBuffer[index] + (0.0000001 * in.position.x * in.normal.x);
 }

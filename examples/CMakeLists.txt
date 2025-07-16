@@ -47,12 +47,57 @@ if (EMSCRIPTEN)
     target_link_options(raytracing PRIVATE "--preload-file=${CMAKE_CURRENT_SOURCE_DIR}/assets@/assets")
 else()
     target_copy_webgpu_binaries(raytracing)
-
-    add_custom_command(TARGET raytracing POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "Copying assets directory to output..."
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:raytracing>/assets"
-        DEPENDS ${ASSET_FILES}
-    )
+    # add_custom_command(TARGET raytracing POST_BUILD
+    #     COMMAND ${CMAKE_COMMAND} -E echo "Copying assets directory to output..."
+    #     COMMAND ${CMAKE_COMMAND} -E copy_directory
+    #         "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    #         "$<TARGET_FILE_DIR:raytracing>/assets"
+    #     DEPENDS ${ASSET_FILES}
+    # )
 endif()
+
+# Set your shader source and output directories
+set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders)
+set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+
+# Find all .slang files recursively
+file(GLOB_RECURSE SLANG_SHADERS RELATIVE ${SHADER_SRC_DIR} ${SHADER_SRC_DIR}/*.slang)
+list(REMOVE_ITEM SLANG_SHADERS "cbz.slang")
+
+# Collect output targets to build as dependencies
+set(SLANG_OUTPUTS)
+
+foreach(SHADER_FILE ${SLANG_SHADERS})
+    # Full path to the input shader
+    set(INPUT_PATH ${SHADER_SRC_DIR}/${SHADER_FILE})
+
+    # Replace extension with .spirv and .json
+    string(REPLACE ".slang" ".spirv" SPIRV_FILE ${SHADER_FILE})
+    string(REPLACE ".slang" ".json"  JSON_FILE  ${SHADER_FILE})
+
+    # Output paths in the working directory
+    set(SPIRV_OUTPUT ${SHADER_OUT_DIR}/${SPIRV_FILE})
+    set(JSON_OUTPUT  ${SHADER_OUT_DIR}/${JSON_FILE})
+
+    # Make sure the output directories exist
+    get_filename_component(SPIRV_DIR ${SPIRV_OUTPUT} DIRECTORY)
+    file(MAKE_DIRECTORY ${SPIRV_DIR})
+
+
+    add_custom_command(
+        OUTPUT ${SPIRV_OUTPUT} ${JSON_OUTPUT}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPIRV_DIR}
+        COMMAND slangc ${INPUT_PATH}
+                -target spirv
+                -o ${SPIRV_OUTPUT}
+                -reflection-json ${JSON_OUTPUT}
+        DEPENDS ${INPUT_PATH}
+        COMMENT "Compiling shader ${SHADER_FILE}"
+        VERBATIM
+    )
+
+    list(APPEND SLANG_OUTPUTS ${SPIRV_OUTPUT} ${JSON_OUTPUT})
+endforeach()
+
+# Add a target that builds all shaders
+add_custom_target(compile_shaders ALL DEPENDS ${SLANG_OUTPUTS})

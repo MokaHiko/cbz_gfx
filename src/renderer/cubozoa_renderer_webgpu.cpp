@@ -19,6 +19,9 @@
 #include <backends/imgui_impl_wgpu.h>
 #include <imgui.h>
 
+#define CBZ_USE_SPRIV 1
+#include <fstream>
+
 constexpr static WGPUTextureDimension
 TextureDimToWGPU(cbz::TextureDimension dim) {
   switch (dim) {
@@ -819,32 +822,19 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
 
 Result ShaderWebGPU::create(const std::string &path) {
   std::filesystem::path shaderPath = path;
+  std::filesystem::path reflectionPath = path;
+  reflectionPath.replace_extension(".json");
 
-  std::string slangSrcCode;
-  if (LoadFileAsText(shaderPath.string(), slangSrcCode) != Result::eSuccess) {
-    return Result::eWGPUError;
-  }
-
-  nlohmann::json bodyJson;
-  bodyJson["source"] = slangSrcCode;
-  bodyJson["entryPoint"] = "vertexMain";
-  bodyJson["target"] = "WGSL";
-
-  net::HttpResponse res =
-      sShaderHttpClient->postJson("/compile", bodyJson.dump().c_str());
-
-  const std::string reflectionStr =
-      std::string(res.readAsCString(), res.getSize());
-  nlohmann::json responseJson = nlohmann::json::parse(reflectionStr);
+  std::ifstream reflectionStream(reflectionPath);
+  nlohmann::json reflectionJson = nlohmann::json::parse(reflectionStream);
 
   // Parse uniforms
-  nlohmann::json json = responseJson["reflection"];
-  for (const auto &paramJson : json["parameters"]) {
+  for (const auto &paramJson : reflectionJson["parameters"]) {
     parseJsonRecursive(paramJson, false, 0);
   }
 
   // Vertex Input scope
-  for (const auto &entryPoint : json["entryPoints"]) {
+  for (const auto &entryPoint : reflectionJson["entryPoints"]) {
     if (entryPoint.value("stage", "") == "fragment") {
       mStages |= WGPUShaderStage_Fragment;
     }
@@ -862,7 +852,7 @@ Result ShaderWebGPU::create(const std::string &path) {
         for (const auto &field : fields) {
           // Skipped built in
           std::string semanticName = field.value("semanticName", "");
-          if (semanticName == "SV_VULKANINSTANCEID") {
+          if (semanticName == "SV_INSTANCEID") {
             continue;
           }
 
@@ -964,12 +954,32 @@ Result ShaderWebGPU::create(const std::string &path) {
 
   WGPUShaderModuleDescriptor shaderModuleDesc{};
 
-  WGPUShaderModuleWGSLDescriptor shaderCodeDesc;
+#ifdef CBZ_USE_SPRIV
+  std::vector<uint8_t> shaderSrcCode;
+  if (LoadFileAsBinary(shaderPath.string(), shaderSrcCode) != Result::eSuccess) {
+    return Result::eWGPUError;
+  }
+
+  WGPUShaderModuleSPIRVDescriptor shaderCodeDesc = {};
+  shaderCodeDesc.chain.next = nullptr;
+  shaderCodeDesc.chain.sType = WGPUSType_ShaderModuleSPIRVDescriptor;
+  shaderCodeDesc.code = reinterpret_cast<const uint32_t*>(shaderSrcCode.data());
+  shaderCodeDesc.codeSize = static_cast<uint32_t>(shaderSrcCode.size()) / sizeof(uint32_t);
+#else
+  std::string shaderSrcCode;
+  if (LoadFileAsText(shaderPath.string(), shaderSrcCode) != Result::eSuccess) {
+    return Result::eWGPUError;
+  }
+
+  std::string slangSrcCode;
+  if (LoadFileAsText(shaderPath.string(), slangSrcCode) != Result::eSuccess) {
+    return Result::eWGPUError;
+  }
+  WGPUShaderModuleWGSLDescriptor shaderCodeDesc = {};
   shaderCodeDesc.chain.next = nullptr;
   shaderCodeDesc.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
-
-  const std::string &wgslSrcCode = responseJson["code"].get<std::string>();
-  shaderCodeDesc.code = wgslSrcCode.c_str();
+  shaderCodeDesc.code = shaderSrcCode.c_str();
+#endif
 
   shaderModuleDesc.nextInChain = &shaderCodeDesc.chain;
   shaderModuleDesc.label = path.c_str();
@@ -986,7 +996,10 @@ Result ShaderWebGPU::create(const std::string &path) {
   return Result::eSuccess;
 }
 
-void ShaderWebGPU::destroy() { wgpuShaderModuleRelease(mModule); }
+void ShaderWebGPU::destroy() { 
+    wgpuShaderModuleRelease(mModule); 
+    mModule = NULL;
+}
 
 Result GraphicsProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
   mShaderHandle = sh;
@@ -1101,6 +1114,7 @@ void GraphicsProgramWebGPU::destroy() {
   }
 
   wgpuRenderPipelineRelease(mPipeline);
+  mPipeline = NULL;
 }
 
 Result ComputeProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
@@ -1113,7 +1127,7 @@ Result ComputeProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
   pipelineDesc.label = name.c_str();
 
   pipelineDesc.compute.module = shader->getModule();
-  pipelineDesc.compute.entryPoint = "computeMain";
+  pipelineDesc.compute.entryPoint = "main";
 
   std::string layoutName = std::string(name) + std::string("_layout");
   WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
@@ -1147,6 +1161,7 @@ void ComputeProgramWebGPU::destroy() {
   }
 
   wgpuComputePipelineRelease(mPipeline);
+  mPipeline = NULL;
 }
 
 Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
@@ -1154,19 +1169,18 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   sLogger->set_level(spdlog::level::trace);
   sLogger->set_pattern("[%^%l%$][CBZ|RENDERER|WGPU] %v");
 
-  net::Endpoint cbzEndPoint = {
-      net::Address("192.168.1.7"),
-      net::Port(6000),
-  };
+  //net::Endpoint cbzEndPoint = {
+  //    net::Address("192.168.1.4"),
+  //    net::Port(6000),
+  //};
 
-  sShaderHttpClient = net::httpClientCreate(cbzEndPoint);
-  if (!sShaderHttpClient) {
-    sLogger->error("Failed to connect to shader compilation sever!)");
-    return Result::eFailure;
-  }
+  //sShaderHttpClient = net::httpClientCreate(cbzEndPoint);
+  //if (!sShaderHttpClient) {
+  //  sLogger->error("Failed to connect to shader compilation sever!)");
+  //  return Result::eFailure;
+  //}
 
-  sLogger->info("Shader compiler backend connected ({}:{})",
-                cbzEndPoint.address.c_str(), cbzEndPoint.port.c_str());
+  //sLogger->info("Shader compiler backend connected ({}:{})", cbzEndPoint.address.c_str(), cbzEndPoint.port.c_str());
 
 #ifdef WEBGPU_BACKEND_EMSCRIPTEN
   WGPUInstance instance = wgpuCreateInstance(nullptr);
@@ -1182,6 +1196,9 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   adaptorOpts.compatibleSurface = sSurface;
   adaptorOpts.powerPreference = WGPUPowerPreference_Undefined;
   adaptorOpts.backendType = WGPUBackendType_Undefined;
+#ifdef WEBGPU_BACKEND_WGPU
+  adaptorOpts.backendType = WGPUBackendType_Vulkan;
+#endif
   adaptorOpts.forceFallbackAdapter = 0x00000000;
 
   struct AdapterRequest {

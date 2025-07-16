@@ -4,6 +4,7 @@ docs
 # build directories
 [Bb]uild
 [Bb]uild-web
+[Bb]uild-vs2022/
 
 # clang
 .cache
