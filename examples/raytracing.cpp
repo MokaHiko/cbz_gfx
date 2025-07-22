@@ -67,8 +67,9 @@ constexpr glm::vec3 kVec3Right = { 1.0, 0.0, 0.0 };
 
 class Camera {
 public:
-	Camera(glm::vec3 startPos) : position(startPos) {
-		focalLength = 1.0f;
+	Camera(glm::vec3 startPos) {
+    mData.position = startPos;
+		mData.focalLength = 1.0f;
 		mUH = cbz::UniformCreate("uCamera", cbz::UniformType::eVec4, 5);
 	}
 
@@ -77,18 +78,17 @@ public:
 	};
 
 	void set() {
-		glm::vec3 lookAt = glm::vec3(0.0f, 0.0f, -1.0f) - position;
+		glm::vec3 lookAt = glm::vec3(0.0f, 0.0f, -1.0f) - mData.position;
 
-		forward = glm::normalize(lookAt - glm::vec3(position));
-		right = glm::normalize(glm::cross(forward, kVec3Up));
-		up = glm::normalize(glm::cross(right, forward));
+		mData.forward = glm::normalize(lookAt - glm::vec3(mData.position));
+		mData.right = glm::normalize(glm::cross(mData.forward, kVec3Up));
+		mData.up = glm::normalize(glm::cross(mData.right, mData.forward));
 
-		cbz::UniformSet(mUH, &_cbzUniformVec4);
+		cbz::UniformSet(mUH, mData.cbzUniformVec4());
 	}
 
 	// TODO: Encapsulate for reuse
-	union {
-		struct {
+		struct CameraData {
 			glm::vec3 position; // Basis right
 			uint32_t _padding1;
 
@@ -104,10 +104,8 @@ public:
 			float focalLength;
 			float focusLength;
 			uint32_t _padding5[2];
-		};
-
-		float _cbzUniformVec4[4 * 5]; // 5 UniformType::eVec4
-	};
+      void *cbzUniformVec4() { return reinterpret_cast<void *>(this); }
+		} mData;
 
 private:
 	cbz::UniformHandle mUH;
@@ -205,27 +203,27 @@ public:
 
 		float movementSpeed = 5;
 		if (cbz::IsKeyDown(cbz::Key::eW)) {
-			mCamera->position += mCamera->forward * mDeltaTime * movementSpeed;
+			mCamera->mData.position += mCamera->mData.forward * mDeltaTime * movementSpeed;
 		}
 
 		if (cbz::IsKeyDown(cbz::Key::eS)) {
-			mCamera->position -= mCamera->forward * mDeltaTime * movementSpeed;
+			mCamera->mData.position -= mCamera->mData.forward * mDeltaTime * movementSpeed;
 		}
 
 		if (cbz::IsKeyDown(cbz::Key::eD)) {
-			mCamera->position += mCamera->right * mDeltaTime * movementSpeed;
+			mCamera->mData.position += mCamera->mData.right * mDeltaTime * movementSpeed;
 		}
 
 		if (cbz::IsKeyDown(cbz::Key::eA)) {
-			mCamera->position -= mCamera->right * mDeltaTime * movementSpeed;
+			mCamera->mData.position -= mCamera->mData.right * mDeltaTime * movementSpeed;
 		}
 
 		if (cbz::IsKeyDown(cbz::Key::eSpace)) {
-			mCamera->position.y += mDeltaTime * movementSpeed;
+			mCamera->mData.position.y += mDeltaTime * movementSpeed;
 		}
 
 		if (cbz::IsKeyDown(cbz::Key::eLeftShift)) {
-			mCamera->position.y -= mDeltaTime * movementSpeed;
+			mCamera->mData.position.y -= mDeltaTime * movementSpeed;
 		}
 
 		// --- Compute pass ---

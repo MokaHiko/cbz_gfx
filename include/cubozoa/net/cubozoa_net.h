@@ -12,7 +12,7 @@ public:
 
 private:
   uint16_t mVal = 0;
-  char mStringBuffer[5];
+  char mStringBuffer[6];
 };
 
 struct Ipv4 {
