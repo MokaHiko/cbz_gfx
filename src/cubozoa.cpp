@@ -1,6 +1,5 @@
 #include "cubozoa/cubozoa.h"
 
-#include "cubozoa/net/cubozoa_net.h"
 #include "renderer/cubozoa_irenderer_context.h"
 
 #include <GLFW/glfw3.h>
@@ -60,21 +59,21 @@ Result Init(InitDesc initDesc) {
   sLogger->set_level(spdlog::level::trace);
   sLogger->set_pattern("[%^%l%$][CBZ] %v");
 
-  //switch (initDesc.netStatus) {
-  //case NetworkStatus::eClient:
-  //  result = net::initClient();
-  //  break;
-  //case NetworkStatus::eHost:
-  //  result = net::initServer();
-  //  break;
-  //case NetworkStatus::eNone:
-  //  result = Result::eNetworkFailure;
-  //  break;
-  //}
+  // switch (initDesc.netStatus) {
+  // case NetworkStatus::eClient:
+  //   result = net::initClient();
+  //   break;
+  // case NetworkStatus::eHost:
+  //   result = net::initServer();
+  //   break;
+  // case NetworkStatus::eNone:
+  //   result = Result::eNetworkFailure;
+  //   break;
+  // }
 
-  //if (result != Result::eSuccess) {
-  //  return result;
-  //};
+  // if (result != Result::eSuccess) {
+  //   return result;
+  // };
 
   if (glfwInit() != GLFW_TRUE) {
     sLogger->critical("Failed to initialize glfw!");
@@ -194,7 +193,8 @@ void StructuredBufferSet(BufferSlot slot, StructuredBufferHandle sbh,
                          bool dynamic) {
   Binding binding = {};
 
-  binding.type = dynamic ? BindingType::eRWStructuredBuffer : BindingType::eStructuredBuffer;
+  binding.type = dynamic ? BindingType::eRWStructuredBuffer
+                         : BindingType::eStructuredBuffer;
 
   binding.value.storageBuffer.slot = static_cast<uint8_t>(slot);
   binding.value.storageBuffer.handle = sbh;
@@ -365,8 +365,7 @@ void ComputeProgramDestroy(ComputeProgramHandle cph) {
 }
 
 void TransformSet(float *transform) {
-  memcpy(&sTransforms[sShaderProgramCmds.size()], transform,
-         sizeof(float) * 16);
+  memcpy(&sTransforms[sNextShaderProgramCmdIdx], transform, sizeof(float) * 16);
 }
 
 void Submit(uint8_t target, GraphicsProgramHandle gph) {
