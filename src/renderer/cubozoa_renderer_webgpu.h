@@ -43,8 +43,13 @@ public:
   };
 
 private:
+  struct ShaderOffsets {
+	uint32_t bindingOffset;
+	uint32_t padding; // local padding in struct or array
+  };
+
   void parseJsonRecursive(const nlohmann::json &varJson, bool isBinding,
-                          uint32_t offsets);
+                          ShaderOffsets offsets);
 
 private:
   std::vector<BindingDesc> mBindingDescs;
@@ -107,6 +112,10 @@ public:
 
   [[nodiscard]] inline uint32_t getSize() const {
     return UniformTypeGetSize(mElementType) * mElementCount;
+  }
+
+  [[nodiscard]] inline UniformType getElementType() const {
+      return mElementType;
   }
 
   [[nodiscard]] inline WGPUBindGroupEntry

@@ -75,5 +75,6 @@ float4 fragmentMain(VOut in) : SV_Target
     uint32_t y = uint32_t(in.uv.y * float(height));
     uint32_t index = y * width + x;
 
-    return imageBuffer[index] + (0.0000001 * in.position.x * in.normal.x);
+    //return imageBuffer[index] + (0.0000001 * in.position.x * in.normal.x);
+    return imageBuffer[index] + (0.0000000000000000001 * in.position.x * in.normal.x);
 }

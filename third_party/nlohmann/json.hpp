@@ -9027,7 +9027,7 @@ class json_sax_dom_parser
         {
             JSON_THROW(ex);
         }
-        return false;
+       return false;
     }
 
     constexpr bool is_errored() const

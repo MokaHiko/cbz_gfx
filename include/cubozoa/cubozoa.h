@@ -32,7 +32,7 @@ CBZ_API void IndexBufferSet(IndexBufferHandle ibh);
 CBZ_API void IndexBufferDestroy(IndexBufferHandle ibh);
 
 [[nodiscard]] CBZ_API StructuredBufferHandle StructuredBufferCreate(
-    UniformType type, uint32_t elementCount, const void *data = nullptr,
+    UniformType type, uint32_t elementCount, const void *elementData = nullptr,
     const std::string &name = "");
 
 void StructuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,

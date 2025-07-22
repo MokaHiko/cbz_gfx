@@ -81,6 +81,8 @@ struct BindingDesc {
     uint32_t size;
     uint32_t elementSize;
   };
+
+  uint32_t padding;
 };
 
 struct Binding {

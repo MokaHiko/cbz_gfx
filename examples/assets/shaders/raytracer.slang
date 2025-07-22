@@ -177,6 +177,37 @@ struct Camera
     }
 };
 
+// Declare resouces (buffers, textures)
+[CBZ_DECLARE_BUFFER_0]
+RWStructuredBuffer<cbz::Vec4> imageBuffer;
+
+// Add Uniforms
+static const float3 VOXEL_SIZE = (0.25);
+static const float EPSILON = VOXEL_SIZE.x + 0.1;
+static const uint32_t MAX_STEPS = 500;
+static const uint32_t MAX_BOUNCES = 30;
+static float2 k = float2(1, -1);
+static float h = 0.0001; // replace by an appropriate value
+struct RaytracingSettings
+{
+    cbz::UVec4 dim; // width, height, frame_counter
+};
+
+ConstantBuffer<RaytracingSettings> uRaytracingSettings;
+// ConstantBuffer<Camera> uCamera;
+
+struct UCamera {
+    float3 position;
+
+    float3 u;
+    float3 v;
+    float3 w;
+
+    float3 focal;
+};
+
+ConstantBuffer<UCamera> uCamera;
+
 // Based on technique by Nelari (nelair.us)
 // See: https:// nelari.us/post/weekend_raytracing_with_wgpu_1/#generate-random-points-in-spheres-and-disks
 float3 rngNextVec3InUnitSphere()
@@ -228,8 +259,7 @@ public struct LambertianMaterial : IMaterial
         RayHit hit;
 
         float3 direction = normal + rngNextVec3InUnitSphere();
-        if (length(direction) <= 0.001f)
-        {
+        if (length(direction) <= 0.001f) {
             direction = normal;
         }
 
@@ -241,7 +271,7 @@ public struct LambertianMaterial : IMaterial
     }
 
     private float[3] mAlbedo;
-    private float _padding = 0.0f; // Ensure 16-byte alignment
+    private float _padding;
 };
 
 public struct MetallicMaterial : IMaterial
@@ -266,7 +296,7 @@ public struct MetallicMaterial : IMaterial
     }
 
     private float[3] mAlbedo;
-    private float _padding = 0.0f; // Ensure 16-byte alignment
+    private float _padding;
 };
 
 public struct DielectricMaterial : IMaterial
@@ -289,14 +319,11 @@ public struct DielectricMaterial : IMaterial
         float cosTheta = dot(-ray.getDirection(), outwardNormal);
         float sinTheta = sqrt(max(0.0f, 1.0f - cosTheta * cosTheta));
 
-        if (sinTheta * eta > 1.0f)
-        {
+        if (sinTheta * eta > 1.0f) {
             // Total internal reflection
             float3 reflectDir = reflect(ray.getDirection(), outwardNormal);
             hit.nextRay = Ray(p + reflectDir * EPSILON, reflectDir);
-        }
-        else
-        {
+        } else {
             // Refraction
             float3 outPerp = eta * (ray.getDirection() + cosTheta * outwardNormal);
             float3 outPar = -sqrt(max(0.0f, 1.0f - dot(outPerp, outPerp))) * outwardNormal;
@@ -316,7 +343,7 @@ public struct DielectricMaterial : IMaterial
 
 static const IMaterial[] gMaterials = {
     DielectricMaterial(1.33f),
-    // LambertianMaterial(float3(0.8f, 0.2f, 0.9f)),
+    //LambertianMaterial(float3(0.8f, 0.2f, 0.9f)),
 
     LambertianMaterial(float3(0.5f, 0.5f, 0.5f)),
 
@@ -385,8 +412,7 @@ RayHit Raycast(Ray ray)
             const RenderableSDF rsdf = renderables[renderableIdx];
 
             float sdf = gShapes[rsdf.shapeId].calcSDF(eye);
-            if (rsdf.shapeId == 4)
-            {
+            if (rsdf.shapeId == 4) {
                 sdf = myTorus.calcSDF(eye);
             };
 
@@ -453,104 +479,6 @@ RayHit Raycast(Ray ray)
     return hit;
 }
 
-static const float3 VOXEL_SIZE = (1.0);
-static const float EPSILON = VOXEL_SIZE.x + 0.1;
-static const uint32_t MAX_STEPS = 500;
-static const uint32_t MAX_BOUNCES = 30;
-static float2 k = float2(1, -1);
-static float h = 0.0001; // replace by an appropriate value
-struct URaytracingSettings
-{
-    cbz::UVec4 dim; // width, height, frame_counter
-};
-
-struct UVoxelVolumeDesc
-{
-    cbz::UVec4 dim; // (x) width, (y) height, (z) depth
-};
-
-struct UCamera
-{
-    float3 position;
-
-    float3 u;
-    float3 v;
-    float3 w;
-
-    float3 focal;
-};
-
-[CBZ_DECLARE_BUFFER_0]
-RWStructuredBuffer<cbz::Vec4> imageBuffer;
-
-// Declare uniforms
-ConstantBuffer<URaytracingSettings> uRaytracingSettings;
-ConstantBuffer<UCamera> uCamera;
-
-ConstantBuffer<UVoxelVolumeDesc> uVoxelVolumeDesc;
-
-[CBZ_DECLARE_BUFFER_1]
-StructuredBuffer<cbz::UVec4> voxelVolume;
-
-RayHit DDATrace(Ray ray)
-{
-    float3 position = ray.getOrigin() / VOXEL_SIZE;
-    float3 voxel = floor(position);
-
-    float3 deltaDist = VOXEL_SIZE / ray.getDirection(); // How far along the ray we must travel to cross 1 voxel unit in each axis
-
-    float3 stepDir = sign(ray.getDirection());
-
-    float3 sideDist = {
-        stepDir.x > 0.0 ? voxel.x + 1.0 - position.x : position.x - voxel.x,
-        stepDir.y > 0.0 ? voxel.y + 1.0 - position.y : position.y - voxel.y,
-        stepDir.z > 0.0 ? voxel.z + 1.0 - position.z : position.z - voxel.z,
-    };
-
-    sideDist *= deltaDist; // Scale voxel distance to world space distance.
-
-    for (int _i = 0; _i < MAX_STEPS; _i++)
-    {
-        float4 conds = step(sideDist.xxyy, sideDist.yzzx);
-
-        // Contains only one field with 1.0
-        float3 cases = { 0 };
-        cases.x = conds.x * conds.y;                   // if x is <= y && x is <= z
-        cases.y = (1.0 - cases.x) * conds.z * conds.w; // if y is <= x && y is <= z
-        cases.z = (1.0 - cases.x) * (1.0 - cases.y);   // else case, z is chosen to be the smallest
-
-        voxel += stepDir * cases;
-        sideDist += cases * deltaDist; // TODO Handle edge cases NaN, Infs
-
-        // Check if we are out of bounds
-        if (voxel.x >= uVoxelVolumeDesc.dim.x || voxel.y >= uVoxelVolumeDesc.dim.y || voxel.z >= uVoxelVolumeDesc.dim.z)
-        {
-            RayHit hit;
-            hit.color = float3(1.0f, 1.0f, 1.0f);
-            hit.shouldContinue = true;
-            return hit;
-        }
-
-        uint32_t voxelIndex = uint32_t(voxel.x) + uint32_t(voxel.y) * uVoxelVolumeDesc.dim.x + uint32_t(voxel.z) * uVoxelVolumeDesc.dim.x * uVoxelVolumeDesc.dim.y;
-        if (voxelVolume[voxelIndex].w != 0) // Check if the voxel is empty
-        {
-            RayHit hit;
-            hit.shouldContinue = false;
-
-            float factor = 1.0f / 255.0f;
-            //hit.color = float3(voxelVolume[voxelIndex].x * factor, voxelVolume[voxelIndex].y * factor, voxelVolume[voxelIndex].z * factor);
-            //hit.color = float3(voxel.x * 0.1f, voxel.y * 0.1f, voxel.z * 0.1f);
-            hit.color = float3(1.0f, voxel.y / (float)uVoxelVolumeDesc.dim.y, voxel.x / (float)uVoxelVolumeDesc.dim.x);
-            return hit;
-        }
-    }
-
-    RayHit hit;
-    hit.color = float3(1.0f, 1.0f, 1.0f);
-    hit.shouldContinue = false;
-    return hit;
-}
-
 // TODO: Take Control of Graphics & Compute mains
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -577,7 +505,7 @@ void main(uint2 gInvocationId: SV_DispatchThreadID)
 
     float3 viewPortU = viewPortWidth * uCamera.u;
     float3 viewPortV = viewPortHeight * uCamera.v * -1.0f;
-
+     
     float3 pixelDeltaU = viewPortU / width;
     float3 pixelDeltaV = viewPortV / height;
 
@@ -601,24 +529,22 @@ void main(uint2 gInvocationId: SV_DispatchThreadID)
     {
         ++iter;
 
-        hit = DDATrace(hit.nextRay);
+        hit = Raycast(hit.nextRay);
         radiance *= hit.color;
 
         if (!hit.shouldContinue)
         {
             // TODO: Make skybox an emitter in raycast
-            // float ySNORM = primaryRay.at(1.0f).y * 0.5f + 1.0;
+            //float ySNORM = primaryRay.at(1.0f).y * 0.5f + 1.0;
             float ySNORM = Ray(float3(0.0f), rayDir).at(1.0f).y * 0.5f + 1.0;
             float3 skyboxColor = float3((1.0 - ySNORM) * float3(1.0f, 1.0f, 1.0f) + ySNORM * float3(0.5, 0.7, 1.0));
 
             float3 out = radiance * skyboxColor;
 
-            //Gamma(2) correction
+            // Gamma(2) correction
             out = sqrt(out);
 
             imageBuffer[idx] = float4(out, 1.0f);
-
-            //imageBuffer[idx] = float4(radiance, 1.0f); // Debug only
             return;
         }
     }

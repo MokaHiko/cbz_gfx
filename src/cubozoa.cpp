@@ -170,12 +170,12 @@ void IndexBufferDestroy(IndexBufferHandle ibh) {
 
 StructuredBufferHandle StructuredBufferCreate(UniformType type,
                                               uint32_t elementCount,
-                                              const void *data,
+                                              const void *elementData,
                                               const std::string &name) {
   StructuredBufferHandle sbh =
       HandleProvider<StructuredBufferHandle>::write(name);
 
-  if (sRenderer->structuredBufferCreate(sbh, type, elementCount, data) !=
+  if (sRenderer->structuredBufferCreate(sbh, type, elementCount, elementData) !=
       Result::eSuccess) {
 
     HandleProvider<StructuredBufferHandle>::free(sbh);
@@ -194,10 +194,7 @@ void StructuredBufferSet(BufferSlot slot, StructuredBufferHandle sbh,
                          bool dynamic) {
   Binding binding = {};
 
-  binding.type = BindingType::eStructuredBuffer;
-  if (dynamic) {
-    binding.type = BindingType::eRWStructuredBuffer;
-  }
+  binding.type = dynamic ? BindingType::eRWStructuredBuffer : BindingType::eStructuredBuffer;
 
   binding.value.storageBuffer.slot = static_cast<uint8_t>(slot);
   binding.value.storageBuffer.handle = sbh;

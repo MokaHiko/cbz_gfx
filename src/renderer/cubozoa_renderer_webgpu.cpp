@@ -430,6 +430,7 @@ void UniformBufferWebWGPU::destroy() {
   }
 
   wgpuBufferDestroy(mBuffer);
+  mBuffer = NULL;
 }
 
 Result StorageBufferWebWGPU::create(UniformType type, uint32_t elementCount,
@@ -620,7 +621,7 @@ void TextureWebGPU::destroy() {
 }
 
 void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
-                                      bool isBinding, uint32_t offsets) {
+                                      bool isBinding, ShaderOffsets offsets) {
   std::string name = varJson.value("name", "<unnamed>");
 
   bool isNewBinding = false;
@@ -637,12 +638,12 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
 
       int bindingIndex = bindingJson.value("index", -1);
       if (typeKind != "struct") {
-        uint32_t globalIndex = offsets + bindingIndex;
-        if (globalIndex > std::numeric_limits<uint8_t>::max()) {
-            sLogger->error("Binding index out of range {}", globalIndex);
+        uint32_t globalBindingIdx = offsets.bindingOffset + bindingIndex;
+        if (globalBindingIdx > std::numeric_limits<uint8_t>::max()) {
+            sLogger->error("Binding index out of range {}", globalBindingIdx);
         }
         mBindingDescs.push_back({});
-        mBindingDescs.back().index = static_cast<uint8_t>(globalIndex);
+        mBindingDescs.back().index = static_cast<uint8_t>(globalBindingIdx);
         mBindingDescs.back().name = name;
 
         isNewBinding = true;
@@ -650,7 +651,7 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
         sLogger->trace("binding(@{}): '{}'", mBindingDescs.back().index, name);
       } else {
         sLogger->trace("'{}' contains binding: ", name);
-        offsets = bindingIndex;
+        offsets.bindingOffset = bindingIndex;
       }
     }
 
@@ -661,11 +662,13 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
       if (isBinding) {
         mBindingDescs.back().size =
             std::max(mBindingDescs.back().size, offset + size);
+        mBindingDescs.back().padding = offsets.padding;
       }
 
       sLogger->trace("    - name: {}", name);
-      sLogger->trace("    - offset: {}", offset);
-      sLogger->trace("    - size: {}", size);
+      sLogger->trace("    -     offset: {}", offset);
+      sLogger->trace("    -     size: {}", size);
+      sLogger->trace("    -     padding: {}", offsets.padding);
     }
   }
 
@@ -719,6 +722,8 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
 
   if (typeKind == "constantBuffer") {
     const auto &elementTypeJson = typeJson["elementType"];
+    const auto &elementVarLayout = typeJson["elementVarLayout"];
+
     std::string elementKind = elementTypeJson.value("kind", "<unknown_kind>");
 
     sLogger->trace("    - elementKind: {}", elementKind);
@@ -729,8 +734,23 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
         mBindingDescs.back().type = BindingType::eUniformBuffer;
       }
 
-      for (const auto &fieldJson : elementTypeJson["fields"]) {
-        parseJsonRecursive(fieldJson, isNewBinding, offsets);
+      // TODO: Hot garbage make safe.
+      for (size_t fieldIdx = 0; fieldIdx < elementTypeJson["fields"].size(); fieldIdx++) {
+		uint32_t offset = (uint32_t)elementVarLayout["type"]["fields"][fieldIdx]["binding"]["offset"];
+		uint32_t size = (uint32_t)elementVarLayout["type"]["fields"][fieldIdx]["binding"]["size"];
+
+        uint32_t nextOffset = 0;
+        if (fieldIdx < elementTypeJson["fields"].size() - 1) {
+            nextOffset = (uint32_t)elementVarLayout["type"]["fields"][fieldIdx + 1]["binding"]["offset"];
+        }
+        else {
+            nextOffset = (uint32_t)elementVarLayout["binding"]["size"];
+        }
+
+        offsets.padding = nextOffset - (offset + size);
+        parseJsonRecursive(elementTypeJson["fields"][fieldIdx], isNewBinding, offsets);
+
+        offsets.padding = 0;
       }
     }
 
@@ -792,6 +812,8 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
           for (const auto &field : resultTypeFields) {
             parseJsonRecursive(field, true, offsets);
           }
+        } else if(resultTypeKind == "scalar") {
+            parseJsonRecursive(resultTypeJson, true, offsets);
         } else {
           sLogger->error("StructuredBuffer<{}> is not supported!",
                          resultTypeKind);
@@ -830,7 +852,7 @@ Result ShaderWebGPU::create(const std::string &path) {
 
   // Parse uniforms
   for (const auto &paramJson : reflectionJson["parameters"]) {
-    parseJsonRecursive(paramJson, false, 0);
+      parseJsonRecursive(paramJson, false, {});
   }
 
   // Vertex Input scope
@@ -906,12 +928,13 @@ Result ShaderWebGPU::create(const std::string &path) {
     bindingEntries[i].binding = mBindingDescs[i].index;
     bindingEntries[i].visibility = getShaderStages();
 
-    switch (getBindings()[i].type) {
+    const BindingDesc& bindingDesc = getBindings()[i];
+    switch (bindingDesc.type) {
     case BindingType::eUniformBuffer:
       bindingEntries[i].buffer.type = WGPUBufferBindingType_Uniform;
       bindingEntries[i].buffer.nextInChain = nullptr;
       bindingEntries[i].buffer.hasDynamicOffset = false;
-      bindingEntries[i].buffer.minBindingSize = getBindings()[i].size;
+      bindingEntries[i].buffer.minBindingSize = bindingDesc.size + bindingDesc.padding;
       break;
 
     case BindingType::eRWStructuredBuffer:
@@ -1165,9 +1188,9 @@ void ComputeProgramWebGPU::destroy() {
 }
 
 Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
-  sLogger = spdlog::stdout_color_mt("wgpu");
+  sLogger = spdlog::stdout_color_mt("cbzrenderer");
   sLogger->set_level(spdlog::level::trace);
-  sLogger->set_pattern("[%^%l%$][CBZ|RENDERER|WGPU] %v");
+  sLogger->set_pattern("[%^%l%$] IRenderer: %v");
 
   //net::Endpoint cbzEndPoint = {
   //    net::Address("192.168.1.4"),
@@ -1674,14 +1697,14 @@ void RendererContextWebGPU::uniformBufferDestroy(UniformHandle uh) {
 
 Result RendererContextWebGPU::structuredBufferCreate(StructuredBufferHandle sbh,
                                                      UniformType type,
-                                                     uint32_t num,
-                                                     const void *data) {
-  if (sStorageBuffers.size() < sbh.idx + 1) {
-    sStorageBuffers.resize(sbh.idx + 1);
+                                                     uint32_t elementCount,
+                                                     const void *elementData) {
+  if (sStorageBuffers.size() < static_cast<uint64_t>(sbh.idx + 1)) {
+    sStorageBuffers.resize(static_cast<uint64_t>(sbh.idx + 1));
   }
 
   return sStorageBuffers[sbh.idx].create(
-      type, num, data, HandleProvider<StructuredBufferHandle>::getName(sbh));
+      type, elementCount, elementData, HandleProvider<StructuredBufferHandle>::getName(sbh));
 };
 
 void RendererContextWebGPU::structuredBufferUpdate(StructuredBufferHandle sbh,
@@ -1821,39 +1844,48 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
          i++) {
       switch (bindings[i].type) {
       case BindingType::eUniformBuffer: {
-        switch (bindings[i].value.uniformBuffer.valueType) {
-        case UniformType::eVec4:
-        case UniformType::eMat4: {
-          UniformHandle uh = bindings[i].value.uniformBuffer.handle;
+        UniformHandle uh = bindings[i].value.uniformBuffer.handle;
 
-          const auto &it =
-              std::find_if(shaderBindingDescs.begin(), shaderBindingDescs.end(),
-                           [=](const BindingDesc &bindingDesc) {
-                             return bindingDesc.name ==
-                                    HandleProvider<UniformHandle>::getName(uh);
-                           });
+	    const auto &it =
+	  	    std::find_if(shaderBindingDescs.begin(), shaderBindingDescs.end(),
+	  				   [=](const BindingDesc &bindingDesc) {
+	  					 return bindingDesc.name ==
+	  							HandleProvider<UniformHandle>::getName(uh);
+	  				   });
 
-          if (it == shaderBindingDescs.end()) {
+        if (it == shaderBindingDescs.end()) {
             sLogger->error(
                 "Shader program '{}' has no uniform binding named '{}'",
                 HandleProvider<ShaderHandle>::getName(sh),
                 HandleProvider<UniformHandle>::getName(uh));
             return nullptr;
-          }
-
-          bindGroupEntries[i] =
-              sUniformBuffers[uh.idx].createBindGroupEntry(it->index);
-        } break;
-
-        default:
-          sLogger->error("Unsupported uniform buffer ShaderValueType!");
-          break;
         }
-      } break;
 
+        if (it->elementSize + it->padding > sUniformBuffers[uh.idx].getSize()) {
+            sLogger->error(
+                "Uniform '{}' size too small (< {} bytes); requires 64. Increase elementCount.",
+                HandleProvider<UniformHandle>::getName(uh),
+                sUniformBuffers[uh.idx].getSize(),
+                it->elementSize
+            );
+            return nullptr;
+        }
+
+        if (it->elementSize + it->padding < sUniformBuffers[uh.idx].getSize()) {
+            sLogger->warn(
+                "Uniform '{}' size larger than (< {} bytes); requires {}. Consider Decreasing elementCount.",
+                HandleProvider<UniformHandle>::getName(uh),
+                sUniformBuffers[uh.idx].getSize(),
+                it->elementSize
+            );
+        }
+
+        bindGroupEntries[i] = sUniformBuffers[uh.idx].createBindGroupEntry(it->index);
+      } break;
       case BindingType::eRWStructuredBuffer:
       case BindingType::eStructuredBuffer: {
         switch (bindings[i].value.storageBuffer.valueType) {
+        case UniformType::eUINT:
         case UniformType::eVec4:
         case UniformType::eMat4: {
           StructuredBufferHandle sbh = bindings[i].value.storageBuffer.handle;

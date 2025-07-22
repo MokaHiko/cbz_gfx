@@ -380,8 +380,9 @@ enum class TextureDimension : uint32_t {
 };
 
 enum class UniformType : uint32_t {
-  eVec4,
-  eMat4,
+  eUINT, // uint32_t
+  eVec4, // float[4]
+  eMat4, // float[16]
 };
 
 enum class TargetType : uint32_t {
@@ -408,6 +409,8 @@ enum class TextureSlot : uint8_t {
 
 [[nodiscard]] constexpr uint32_t UniformTypeGetSize(UniformType type) {
   switch (type) {
+  case UniformType::eUINT:
+    return sizeof(uint32_t);
   case UniformType::eVec4:
     return sizeof(float) * 4;
   case UniformType::eMat4:
