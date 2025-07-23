@@ -10,6 +10,7 @@ public static const float32_t PI = 3.14159265359;
 // Uniforms
 public typedef float4 Vec4;
 public typedef uint4 UVec4;
+public typedef int4 IVec4;
 
 static uint32_t sRandState;
 static bool sFirstRandom = true;
@@ -466,7 +467,7 @@ struct URaytracingSettings
 
 struct UVoxelVolumeDesc
 {
-    cbz::UVec4 dim; // (x) width, (y) height, (z) depth
+    cbz::IVec4 dim; // (x) width, (y) height, (z) depth
 };
 
 struct UCamera
@@ -497,7 +498,7 @@ RayHit DDATrace(Ray ray)
     float3 position = ray.getOrigin() / VOXEL_SIZE;
     float3 voxel = floor(position);
 
-    float3 deltaDist = VOXEL_SIZE / ray.getDirection(); // How far along the ray we must travel to cross 1 voxel unit in each axis
+    float3 deltaDist = VOXEL_SIZE / abs(ray.getDirection()); // How far along the ray we must travel to cross 1 voxel unit in each axis
 
     float3 stepDir = sign(ray.getDirection());
 
@@ -520,19 +521,29 @@ RayHit DDATrace(Ray ray)
         cases.z = (1.0 - cases.x) * (1.0 - cases.y);   // else case, z is chosen to be the smallest
 
         voxel += stepDir * cases;
-        sideDist += cases * deltaDist; // TODO Handle edge cases NaN, Infs
 
-        // Check if we are out of bounds
-        if (voxel.x >= uVoxelVolumeDesc.dim.x || voxel.y >= uVoxelVolumeDesc.dim.y || voxel.z >= uVoxelVolumeDesc.dim.z)
+        //Safe version of sideDist += cases * deltaDist that handles NaN and Inf
+        sideDist += max((2.0 * cases - 1.0) * deltaDist, 0.0);
+
+        // Only process positive voxels
+        uint32_t shouldProcess = 1;
+        if ((int32_t)voxel.x < 0 || 
+            (int32_t)voxel.y < 0 || 
+            (int32_t)voxel.z < 0)
         {
-            RayHit hit;
-            hit.color = float3(1.0f, 1.0f, 1.0f);
-            hit.shouldContinue = true;
-            return hit;
+            shouldProcess = 0;
         }
 
-        uint32_t voxelIndex = uint32_t(voxel.x) + uint32_t(voxel.y) * uVoxelVolumeDesc.dim.x + uint32_t(voxel.z) * uVoxelVolumeDesc.dim.x * uVoxelVolumeDesc.dim.y;
-        if (voxelVolume[voxelIndex].w != 0) // Check if the voxel is empty
+        // Check if we are out of bounds
+        if ((int32_t)voxel.x >= uVoxelVolumeDesc.dim.x || 
+            (int32_t)voxel.y >= uVoxelVolumeDesc.dim.y || 
+            (int32_t)voxel.z >= uVoxelVolumeDesc.dim.z)
+        {
+            shouldProcess = 0;
+        }
+
+        int32_t voxelIndex = int32_t(voxel.x) + int32_t(voxel.y) * uVoxelVolumeDesc.dim.x + int32_t(voxel.z) * uVoxelVolumeDesc.dim.x * uVoxelVolumeDesc.dim.y;
+        if (voxelVolume[voxelIndex].w * shouldProcess != 0) // Check if the voxel is empty
         {
             RayHit hit;
             hit.shouldContinue = false;

@@ -167,7 +167,7 @@ private:
 
 	union {
 		union {
-			uint32_t mDimensions[3]; // (x) width, (y) height, (z) depth
+			int32_t mDimensions[3]; // (x) width, (y) height, (z) depth
 			uint32_t _cbzUniformVec4[4];
 		};
 	};
