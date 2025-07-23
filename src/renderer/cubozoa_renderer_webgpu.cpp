@@ -1647,8 +1647,8 @@ Result
 RendererContextWebGPU::vertexBufferCreate(VertexBufferHandle vbh,
                                           const VertexLayout &vertexLayout,
                                           uint32_t count, const void *data) {
-  if (sVertexBuffers.size() < vbh.idx + 1) {
-    sVertexBuffers.resize(vbh.idx + 1);
+  if (sVertexBuffers.size() < vbh.idx + 1u) {
+    sVertexBuffers.resize(vbh.idx + 1u);
   }
 
   return sVertexBuffers[vbh.idx].create(vertexLayout, count, data);
@@ -1662,8 +1662,8 @@ Result RendererContextWebGPU::indexBufferCreate(IndexBufferHandle ibh,
                                                 IndexFormat format,
                                                 uint32_t count,
                                                 const void *data) {
-  if (sIndexBuffers.size() < ibh.idx + 1) {
-    sIndexBuffers.resize(ibh.idx + 1);
+  if (sIndexBuffers.size() < ibh.idx + 1u) {
+    sIndexBuffers.resize(ibh.idx + 1u);
   }
 
   return sIndexBuffers[ibh.idx].create(static_cast<WGPUIndexFormat>(format),
@@ -1678,8 +1678,8 @@ Result RendererContextWebGPU::uniformBufferCreate(UniformHandle uh,
                                                   UniformType type,
                                                   uint16_t num,
                                                   const void *data) {
-  if (sUniformBuffers.size() < uh.idx + 1) {
-    sUniformBuffers.resize(uh.idx + 1);
+  if (sUniformBuffers.size() < uh.idx + 1u) {
+    sUniformBuffers.resize(uh.idx + 1u);
   }
 
   return sUniformBuffers[uh.idx].create(
@@ -1699,8 +1699,8 @@ Result RendererContextWebGPU::structuredBufferCreate(StructuredBufferHandle sbh,
                                                      UniformType type,
                                                      uint32_t elementCount,
                                                      const void *elementData) {
-  if (sStorageBuffers.size() < static_cast<uint64_t>(sbh.idx + 1)) {
-    sStorageBuffers.resize(static_cast<uint64_t>(sbh.idx + 1));
+  if (sStorageBuffers.size() < static_cast<uint64_t>(sbh.idx + 1u)) {
+    sStorageBuffers.resize(static_cast<uint64_t>(sbh.idx + 1u));
   }
 
   return sStorageBuffers[sbh.idx].create(
@@ -1756,8 +1756,8 @@ Result RendererContextWebGPU::textureCreate(TextureHandle th,
                                             TextureFormat format, uint32_t w,
                                             uint32_t h, uint32_t depth,
                                             TextureDimension dimension) {
-  if (sTextures.size() < th.idx + 1) {
-    sTextures.resize(th.idx + 1);
+  if (sTextures.size() < th.idx + 1u) {
+    sTextures.resize(th.idx + 1u);
   }
 
   return sTextures[th.idx].create(w, h, depth, TextureDimToWGPU(dimension),
@@ -1775,8 +1775,8 @@ void RendererContextWebGPU::textureDestroy(TextureHandle th) {
 
 Result RendererContextWebGPU::shaderCreate(ShaderHandle sh,
                                            const std::string &path) {
-  if (sShaders.size() < sh.idx + 1) {
-    sShaders.resize(sh.idx + 1);
+  if (sShaders.size() < sh.idx + 1u) {
+    sShaders.resize(sh.idx + 1u);
   }
 
   return sShaders[sh.idx].create(path);
@@ -1788,8 +1788,8 @@ void RendererContextWebGPU::shaderDestroy(ShaderHandle sh) {
 
 Result RendererContextWebGPU::graphicsProgramCreate(GraphicsProgramHandle gph,
                                                     ShaderHandle sh) {
-  if (sGraphicsPrograms.size() < gph.idx + 1) {
-    sGraphicsPrograms.resize(gph.idx + 1);
+  if (sGraphicsPrograms.size() < gph.idx + 1u) {
+    sGraphicsPrograms.resize(gph.idx + 1u);
   }
 
   return sGraphicsPrograms[gph.idx].create(
@@ -1802,8 +1802,8 @@ void RendererContextWebGPU::graphicsProgramDestroy(GraphicsProgramHandle gph) {
 
 Result RendererContextWebGPU::computeProgramCreate(ComputeProgramHandle cph,
                                                    ShaderHandle sh) {
-  if (sComputePrograms.size() < cph.idx + 1) {
-    sComputePrograms.resize(cph.idx + 1);
+  if (sComputePrograms.size() < cph.idx + 1u) {
+    sComputePrograms.resize(cph.idx + 1u);
   }
 
   return sComputePrograms[cph.idx].create(sh);

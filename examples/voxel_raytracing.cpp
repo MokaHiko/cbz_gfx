@@ -68,8 +68,9 @@ constexpr glm::vec3 kVec3Right = { 1.0, 0.0, 0.0 };
 class Camera {
 public:
 	Camera(glm::vec3 startPos) 
-		: position(startPos), mLookAt(glm::vec3(0.0f, 0.0f, -1.0f)) {
-		focalLength = 1.0f;
+		: mLookAt(glm::vec3(0.0f, 0.0f, -1.0f)) {
+    mData.position = startPos;
+		mData.focalLength = 1.0f;
 		mUH = cbz::UniformCreate("uCamera", cbz::UniformType::eVec4, 5);
 	}
 
@@ -82,16 +83,15 @@ public:
 	}
 
 	void set() {
-		forward = glm::normalize(mLookAt - glm::vec3(position));
-		right = glm::normalize(glm::cross(forward, kVec3Up));
-		up = glm::normalize(glm::cross(right, forward));
+		mData.forward = glm::normalize(mLookAt - glm::vec3(mData.position));
+		mData.right = glm::normalize(glm::cross(mData.forward, kVec3Up));
+		mData.up = glm::normalize(glm::cross(mData.right, mData.forward));
 
-		cbz::UniformSet(mUH, &_cbzUniformVec4);
+		cbz::UniformSet(mUH, mData.cbzUniformVec4());
 	}
 
 	// TODO: Encapsulate for reuse
-	union {
-		struct {
+		struct CameraData {
 			glm::vec3 position; // Basis right
 			uint32_t _padding1;
 
@@ -107,10 +107,9 @@ public:
 			float focalLength;
 			float focusLength;
 			uint32_t _padding5[2];
-		};
 
-		float _cbzUniformVec4[4 * 5]; // 5 UniformType::eVec4
-	};
+  		void *cbzUniformVec4() { return reinterpret_cast<void *>(this); }
+		} mData;
 
 private:
 	glm::vec3 mLookAt;
@@ -273,35 +272,35 @@ public:
 
 		float movementSpeed = 5;
 		if (cbz::IsKeyDown(cbz::Key::eW)) {
-			printf("%.2f %.2f %.2f\n", mCamera->position.x, mCamera->position.y, mCamera->position.z);
-			mCamera->position += glm::vec3(0.0, 0.0, 1.0) * mDeltaTime * movementSpeed;
+			printf("%.2f %.2f %.2f\n", mCamera->mData.position.x, mCamera->mData.position.y, mCamera->mData.position.z);
+			mCamera->mData.position += glm::vec3(0.0, 0.0, 1.0) * mDeltaTime * movementSpeed;
 		}
 
 		if (cbz::IsKeyDown(cbz::Key::eS)) {
-			printf("%.2f %.2f %.2f\n", mCamera->position.x, mCamera->position.y, mCamera->position.z);
-			mCamera->position -= glm::vec3(0.0, 0.0, 1.0) * mDeltaTime * movementSpeed;
+			printf("%.2f %.2f %.2f\n", mCamera->mData.position.x, mCamera->mData.position.y, mCamera->mData.position.z);
+			mCamera->mData.position -= glm::vec3(0.0, 0.0, 1.0) * mDeltaTime * movementSpeed;
 		}
 
 		if (cbz::IsKeyDown(cbz::Key::eD)) {
-			printf("%.2f %.2f %.2f\n", mCamera->position.x, mCamera->position.y, mCamera->position.z);
-			//mCamera->position += mCamera->right * mDeltaTime * movementSpeed;
-			mCamera->position += glm::vec3(1.0, 0.0, 0.0) * mDeltaTime * movementSpeed;
+			printf("%.2f %.2f %.2f\n", mCamera->mData.position.x, mCamera->mData.position.y, mCamera->mData.position.z);
+			//mCamera->mData.position += mCamera->right * mDeltaTime * movementSpeed;
+			mCamera->mData.position += glm::vec3(1.0, 0.0, 0.0) * mDeltaTime * movementSpeed;
 		}
 
 		if (cbz::IsKeyDown(cbz::Key::eA)) {
-			printf("%.2f %.2f %.2f\n", mCamera->position.x, mCamera->position.y, mCamera->position.z);
+			printf("%.2f %.2f %.2f\n", mCamera->mData.position.x, mCamera->mData.position.y, mCamera->mData.position.z);
 			//mCamera->position -= mCamera->right * mDeltaTime * movementSpeed;
-			mCamera->position -= glm::vec3(1.0, 0.0, 0.0) * mDeltaTime * movementSpeed;
+			mCamera->mData.position -= glm::vec3(1.0, 0.0, 0.0) * mDeltaTime * movementSpeed;
 		}
 
 		if (cbz::IsKeyDown(cbz::Key::eSpace)) {
-			printf("%.2f %.2f %.2f\n", mCamera->position.x, mCamera->position.y, mCamera->position.z);
-			mCamera->position.y += mDeltaTime * movementSpeed;
+			printf("%.2f %.2f %.2f\n", mCamera->mData.position.x, mCamera->mData.position.y, mCamera->mData.position.z);
+			mCamera->mData.position.y += mDeltaTime * movementSpeed;
 		}
 
 		if (cbz::IsKeyDown(cbz::Key::eLeftShift)) {
-			printf("%.2f %.2f %.2f\n", mCamera->position.x, mCamera->position.y, mCamera->position.z);
-			mCamera->position.y -= mDeltaTime * movementSpeed;
+			printf("%.2f %.2f %.2f\n", mCamera->mData.position.x, mCamera->mData.position.y, mCamera->mData.position.z);
+			mCamera->mData.position.y -= mDeltaTime * movementSpeed;
 		}
 
 		// --- Compute pass ---
