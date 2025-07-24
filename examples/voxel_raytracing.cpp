@@ -28,15 +28,8 @@
 
 #include <cubozoa/cubozoa.h>
 
-#ifdef __EMSCRIPTEN__
-#include <emscripten/html5.h>
-#endif
-
-#define GLM_FORCE_RIGHT_HANDED
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#include <glm/ext.hpp>
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
+#include <memory>
+#include <cstdio>
 
 static std::vector<float> sQuadVertices = {
     // x,   y,     z,   normal,           uv
@@ -216,7 +209,7 @@ public:
         sQuadVertices.data());
 
     mQuadIBH = cbz::IndexBufferCreate(
-        IndexFormat::eUint16, static_cast<uint32_t>(sQuadIndices.size()),
+        CBZ_INDEX_FORMAT_UINT16, static_cast<uint32_t>(sQuadIndices.size()),
         sQuadIndices.data());
 
     // Create blit texture

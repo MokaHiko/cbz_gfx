@@ -5,6 +5,7 @@
 
 // TODO: Remove stl from public fns
 #include <vector>
+#include <limits>
 
 #ifndef CBZ_NULLABLE
 #ifdef __clang__
@@ -47,8 +48,8 @@
 #endif
 
 typedef uint32_t CBZBool32;
-static CBZBool32 CBZ_TRUE = UINT32_MAX;
-static CBZBool32 CBZ_FALSE = 0;
+const static CBZBool32 CBZ_TRUE = UINT32_MAX;
+const static CBZBool32 CBZ_FALSE = 0;
 
 namespace cbz {
 
@@ -129,11 +130,11 @@ typedef enum {
 } CBZVertexAttributeType;
 
 // @ note one to one mapping with 'WGPUIndexFormat'
-enum class IndexFormat : uint32_t {
-  eUndefined = 0x00000000,
-  eUint16 = 0x00000001,
-  eUint32 = 0x00000002,
-};
+typedef enum {
+  CBZ_INDEX_FORMAT_UNDEFINED = 0x00000000,
+  CBZ_INDEX_FORMAT_UINT16 = 0x00000001,
+  CBZ_INDEX_FORMAT_UINT32 = 0x00000002,
+} CBZIndexFormat;
 
 // @note one to one mapping with 'WGPUTextureFormat'
 typedef enum {
