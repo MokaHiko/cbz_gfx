@@ -1,6 +1,8 @@
 #ifndef CBZ_FILE_H_
 #define CBZ_FILE_H_
 
+#include <cubozoa/cubozoa_defines.h>
+
 namespace cbz {
 
 // @brief populates 'out' buffer with contents of file in 'filePath'

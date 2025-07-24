@@ -1,48 +1,11 @@
-namespace cbz
-{
-
-#define CBZ_DECLARE_BUFFER_0 [vk::binding(0)]
-#define CBZ_DECLARE_BUFFER_1 [vk::binding(1)]
-
-#define CBZ_DECLARE_TEXTURE_1 [vk::binding(4)]
-#define CBZ_DECLARE_TEXTURE_2 [vk::binding(6)]
-
-// Uniforms
-typedef float4 Vec4;
-
-// Graphics
-public struct TransformData
-{
-    float4x4 model;
-    float4x4 view;
-    float4x4 proj;
-
-    float4x4 model_inv;
-    float4x4 view_inv;
-};
-
-[CBZ_DECLARE_BUFFER_0]
-public StructuredBuffer<TransformData> transforms;
-
-public struct SampledTexture {
-    public float4 sample(float2 uv) {
-        return mTexture.Sample(mSampler, uv);
-    };
-
-    Texture2D mTexture;
-    SamplerState mSampler;
-};
-
-}; // namespace cbz
-
-//#define CBZ_TRANSFORM cbz::transforms[in.drawID].model
+import cbz;
+import cbz_graphics;
 
 struct Vertex
 {
     float3 position;
     float3 normal;
     float2 uv;
-    //uint32_t drawID : SV_InstanceID;
 };
 
 struct VOut
@@ -62,7 +25,7 @@ VOut vertexMain(Vertex in)
     return output;
 }
 
-[CBZ_DECLARE_BUFFER_1]
+[[vk_binding(cbz::BUFFER0)]]
 StructuredBuffer<float4> imageBuffer;
 
 [shader("fragment")]

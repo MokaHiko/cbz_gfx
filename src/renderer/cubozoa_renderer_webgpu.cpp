@@ -1,3 +1,5 @@
+#include <cbz_pch.h>
+
 #include "cubozoa_renderer_webgpu.h"
 
 #include "GLFW/glfw3.h"
@@ -7,29 +9,24 @@
 #include "cubozoa/net/cubozoa_net_http.h"
 #include "cubozoa_irenderer_context.h"
 
-#include <cstdint>
-#include <ctime>
-#include <filesystem>
-#include <webgpu/webgpu.h>
-
 #include <murmurhash/MurmurHash3.h>
 #include <nlohmann/json.hpp>
 
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_wgpu.h>
+
 #include <imgui.h>
 
-#define CBZ_USE_SPRIV 1
 #include <fstream>
 
 constexpr static WGPUTextureDimension
-TextureDimToWGPU(cbz::TextureDimension dim) {
+TextureDimToWGPU(CBZTextureDimension dim) {
   switch (dim) {
-  case cbz::TextureDimension::e1D:
+  case CBZ_TEXTURE_DIMENSION_1D:
     return WGPUTextureDimension_1D;
-  case cbz::TextureDimension::e2D:
+  case CBZ_TEXTURE_DIMENSION_2D:
     return WGPUTextureDimension_2D;
-  case cbz::TextureDimension::e3D:
+  case CBZ_TEXTURE_DIMENSION_3D:
     return WGPUTextureDimension_3D;
   default:
     spdlog::error("Uknown WGPU format!");
@@ -113,10 +110,10 @@ CheckAndCreateRequiredLimits(WGPUAdapter adapter) {
 
   requiredLimits.limits.maxBindGroups = 2;
   requiredLimits.limits.maxUniformBuffersPerShaderStage =
-      static_cast<uint32_t>(cbz::BufferSlot::eCount);
+      static_cast<uint32_t>(CBZ_BUFFER_COUNT);
   requiredLimits.limits.maxUniformBufferBindingSize = 65536; // Default
   requiredLimits.limits.maxStorageBuffersPerShaderStage =
-      static_cast<uint32_t>(cbz::BufferSlot::eCount);
+      static_cast<uint32_t>(CBZ_BUFFER_COUNT);
   requiredLimits.limits.maxStorageBufferBindingSize =
       supportedLimits.limits.maxStorageBufferBindingSize;
 
@@ -199,8 +196,8 @@ public:
 
   void indexBufferDestroy(IndexBufferHandle ibh) override;
 
-  [[nodiscard]] Result uniformBufferCreate(UniformHandle uh, UniformType type,
-                                           uint16_t num,
+  [[nodiscard]] Result uniformBufferCreate(UniformHandle uh,
+                                           CBZUniformType type, uint16_t num,
                                            const void *data = nullptr) override;
 
   void uniformBufferUpdate(UniformHandle uh, void *data, uint16_t num) override;
@@ -208,7 +205,7 @@ public:
   void uniformBufferDestroy(UniformHandle uh) override;
 
   [[nodiscard]] Result
-  structuredBufferCreate(StructuredBufferHandle sbh, UniformType type,
+  structuredBufferCreate(StructuredBufferHandle sbh, CBZUniformType type,
                          uint32_t num, const void *data = nullptr) override;
 
   void structuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,
@@ -220,15 +217,15 @@ public:
   [[nodiscard]] SamplerHandle
   getSampler(TextureBindingDesc texBindingDesc) override;
 
-  [[nodiscard]] Result textureCreate(TextureHandle th, TextureFormat format,
+  [[nodiscard]] Result textureCreate(TextureHandle th, CBZTextureFormat format,
                                      uint32_t x, uint32_t y, uint32_t z,
-                                     TextureDimension dimension) override;
+                                     CBZTextureDimension dimension) override;
 
   void textureUpdate(TextureHandle th, void *data, uint32_t count) override;
 
   void textureDestroy(TextureHandle th) override;
 
-  [[nodiscard]] Result shaderCreate(ShaderHandle sh,
+  [[nodiscard]] Result shaderCreate(ShaderHandle sh, CBZShaderFlags flags,
                                     const std::string &path) override;
 
   void shaderDestroy(ShaderHandle sh) override;
@@ -373,7 +370,7 @@ void IndexBufferWebGPU::destroy() {
   wgpuBufferDestroy(mBuffer);
 }
 
-[[nodiscard]] Result UniformBufferWebWGPU::create(UniformType type,
+[[nodiscard]] Result UniformBufferWebWGPU::create(CBZUniformType type,
                                                   uint16_t num,
                                                   const void *data,
                                                   const std::string &name) {
@@ -433,7 +430,7 @@ void UniformBufferWebWGPU::destroy() {
   mBuffer = NULL;
 }
 
-Result StorageBufferWebWGPU::create(UniformType type, uint32_t elementCount,
+Result StorageBufferWebWGPU::create(CBZUniformType type, uint32_t elementCount,
                                     const void *data, const std::string &name) {
   mElementType = type;
   mElementCount = elementCount;
@@ -528,7 +525,7 @@ Result TextureWebGPU::create(uint32_t w, uint32_t h, uint32_t depth,
 
 void TextureWebGPU::update(void *data, uint32_t count) {
   const uint32_t formatSize = TextureFormatGetSize(
-      static_cast<TextureFormat>(wgpuTextureGetFormat(mTexture)));
+      static_cast<CBZTextureFormat>(wgpuTextureGetFormat(mTexture)));
   const uint32_t size = formatSize * count;
 
   WGPUImageCopyTexture destination = {};
@@ -640,7 +637,7 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
       if (typeKind != "struct") {
         uint32_t globalBindingIdx = offsets.bindingOffset + bindingIndex;
         if (globalBindingIdx > std::numeric_limits<uint8_t>::max()) {
-            sLogger->error("Binding index out of range {}", globalBindingIdx);
+          sLogger->error("Binding index out of range {}", globalBindingIdx);
         }
         mBindingDescs.push_back({});
         mBindingDescs.back().index = static_cast<uint8_t>(globalBindingIdx);
@@ -735,20 +732,25 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
       }
 
       // TODO: Hot garbage make safe.
-      for (size_t fieldIdx = 0; fieldIdx < elementTypeJson["fields"].size(); fieldIdx++) {
-		uint32_t offset = (uint32_t)elementVarLayout["type"]["fields"][fieldIdx]["binding"]["offset"];
-		uint32_t size = (uint32_t)elementVarLayout["type"]["fields"][fieldIdx]["binding"]["size"];
+      for (size_t fieldIdx = 0; fieldIdx < elementTypeJson["fields"].size();
+           fieldIdx++) {
+        uint32_t offset = (uint32_t)
+            elementVarLayout["type"]["fields"][fieldIdx]["binding"]["offset"];
+        uint32_t size = (uint32_t)
+            elementVarLayout["type"]["fields"][fieldIdx]["binding"]["size"];
 
         uint32_t nextOffset = 0;
         if (fieldIdx < elementTypeJson["fields"].size() - 1) {
-            nextOffset = (uint32_t)elementVarLayout["type"]["fields"][fieldIdx + 1]["binding"]["offset"];
-        }
-        else {
-            nextOffset = (uint32_t)elementVarLayout["binding"]["size"];
+          nextOffset =
+              (uint32_t)elementVarLayout["type"]["fields"][fieldIdx + 1]
+                                        ["binding"]["offset"];
+        } else {
+          nextOffset = (uint32_t)elementVarLayout["binding"]["size"];
         }
 
         offsets.padding = nextOffset - (offset + size);
-        parseJsonRecursive(elementTypeJson["fields"][fieldIdx], isNewBinding, offsets);
+        parseJsonRecursive(elementTypeJson["fields"][fieldIdx], isNewBinding,
+                           offsets);
 
         offsets.padding = 0;
       }
@@ -812,8 +814,8 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
           for (const auto &field : resultTypeFields) {
             parseJsonRecursive(field, true, offsets);
           }
-        } else if(resultTypeKind == "scalar") {
-            parseJsonRecursive(resultTypeJson, true, offsets);
+        } else if (resultTypeKind == "scalar") {
+          parseJsonRecursive(resultTypeJson, true, offsets);
         } else {
           sLogger->error("StructuredBuffer<{}> is not supported!",
                          resultTypeKind);
@@ -842,7 +844,7 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
                  typeKind, name);
 }
 
-Result ShaderWebGPU::create(const std::string &path) {
+Result ShaderWebGPU::create(const std::string &path, CBZShaderFlags flags) {
   std::filesystem::path shaderPath = path;
   std::filesystem::path reflectionPath = path;
   reflectionPath.replace_extension(".json");
@@ -852,7 +854,7 @@ Result ShaderWebGPU::create(const std::string &path) {
 
   // Parse uniforms
   for (const auto &paramJson : reflectionJson["parameters"]) {
-      parseJsonRecursive(paramJson, false, {});
+    parseJsonRecursive(paramJson, false, {});
   }
 
   // Vertex Input scope
@@ -868,7 +870,7 @@ Result ShaderWebGPU::create(const std::string &path) {
     if (entryPoint.value("stage", "") == "vertex") {
       mStages |= WGPUShaderStage_Vertex;
 
-      mVertexLayout.begin(VertexStepMode::eVertex);
+      mVertexLayout.begin(CBZ_VERTEX_STEP_MODE_VERTEX);
       for (const auto &param : entryPoint["parameters"]) {
         auto fields = param["type"]["fields"];
         for (const auto &field : fields) {
@@ -888,26 +890,29 @@ Result ShaderWebGPU::create(const std::string &path) {
           sLogger->trace("Vertex Attribute: location={}, name={}, type={}x{}\n",
                          location, name, scalarType, components);
 
-          VertexAttributeType attribute =
-              static_cast<VertexAttributeType>(location);
+          CBZVertexAttributeType attribute =
+              static_cast<CBZVertexAttributeType>(location);
 
-          VertexFormat format = VertexFormat::eCount;
+          CBZVertexFormat format = CBZ_VERTEX_FORMAT_COUNT;
 
           if (scalarType == "float32") {
-            format = static_cast<VertexFormat>(
-                static_cast<uint32_t>(VertexFormat::eFloat32) + components - 1);
+            format = static_cast<CBZVertexFormat>(
+                static_cast<uint32_t>(CBZ_VERTEX_FORMAT_FLOAT32) + components -
+                1);
           }
 
           if (scalarType == "uint32") {
-            format = static_cast<VertexFormat>(
-                static_cast<uint32_t>(VertexFormat::eUint32) + components - 1);
+            format = static_cast<CBZVertexFormat>(
+                static_cast<uint32_t>(CBZ_VERTEX_FORMAT_UINT32) + components -
+                1);
           }
           if (scalarType == "sint32") {
-            format = static_cast<VertexFormat>(
-                static_cast<uint32_t>(VertexFormat::eSint32) + components - 1);
+            format = static_cast<CBZVertexFormat>(
+                static_cast<uint32_t>(CBZ_VERTEX_FORMAT_SINT32) + components -
+                1);
           }
 
-          if (format == VertexFormat::eCount) {
+          if (format == CBZ_VERTEX_FORMAT_COUNT) {
             sLogger->error(
                 "Failed to parse vertex entry attributes. Uknown format {}x{}",
                 scalarType, components);
@@ -928,13 +933,14 @@ Result ShaderWebGPU::create(const std::string &path) {
     bindingEntries[i].binding = mBindingDescs[i].index;
     bindingEntries[i].visibility = getShaderStages();
 
-    const BindingDesc& bindingDesc = getBindings()[i];
+    const BindingDesc &bindingDesc = getBindings()[i];
     switch (bindingDesc.type) {
     case BindingType::eUniformBuffer:
       bindingEntries[i].buffer.type = WGPUBufferBindingType_Uniform;
       bindingEntries[i].buffer.nextInChain = nullptr;
       bindingEntries[i].buffer.hasDynamicOffset = false;
-      bindingEntries[i].buffer.minBindingSize = bindingDesc.size + bindingDesc.padding;
+      bindingEntries[i].buffer.minBindingSize =
+          bindingDesc.size + bindingDesc.padding;
       break;
 
     case BindingType::eRWStructuredBuffer:
@@ -968,7 +974,7 @@ Result ShaderWebGPU::create(const std::string &path) {
 
   WGPUBindGroupLayoutDescriptor bindGroupLayoutDesc = {};
   bindGroupLayoutDesc.nextInChain = nullptr;
-  bindGroupLayoutDesc.label = "";
+  bindGroupLayoutDesc.label = path.c_str();
   bindGroupLayoutDesc.entryCount = static_cast<uint32_t>(bindingEntries.size());
   bindGroupLayoutDesc.entries = bindingEntries.data();
 
@@ -977,51 +983,61 @@ Result ShaderWebGPU::create(const std::string &path) {
 
   WGPUShaderModuleDescriptor shaderModuleDesc{};
 
-#ifdef CBZ_USE_SPRIV
-  std::vector<uint8_t> shaderSrcCode;
-  if (LoadFileAsBinary(shaderPath.string(), shaderSrcCode) != Result::eSuccess) {
-    return Result::eWGPUError;
-  }
-
-  WGPUShaderModuleSPIRVDescriptor shaderCodeDesc = {};
-  shaderCodeDesc.chain.next = nullptr;
-  shaderCodeDesc.chain.sType = WGPUSType_ShaderModuleSPIRVDescriptor;
-  shaderCodeDesc.code = reinterpret_cast<const uint32_t*>(shaderSrcCode.data());
-  shaderCodeDesc.codeSize = static_cast<uint32_t>(shaderSrcCode.size()) / sizeof(uint32_t);
-#else
-  std::string shaderSrcCode;
-  if (LoadFileAsText(shaderPath.string(), shaderSrcCode) != Result::eSuccess) {
-    return Result::eWGPUError;
-  }
-
-  std::string slangSrcCode;
-  if (LoadFileAsText(shaderPath.string(), slangSrcCode) != Result::eSuccess) {
-    return Result::eWGPUError;
-  }
-  WGPUShaderModuleWGSLDescriptor shaderCodeDesc = {};
-  shaderCodeDesc.chain.next = nullptr;
-  shaderCodeDesc.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
-  shaderCodeDesc.code = shaderSrcCode.c_str();
-#endif
-
-  shaderModuleDesc.nextInChain = &shaderCodeDesc.chain;
   shaderModuleDesc.label = path.c_str();
 #ifdef WEBGPU_BACKEND_WGPU
   shaderModuleDesc.hintCount = 0;
   shaderModuleDesc.hints = nullptr;
 #endif
 
-  mModule = wgpuDeviceCreateShaderModule(sDevice, &shaderModuleDesc);
-  if (!mModule) {
-    return Result::eFailure;
+  if ((flags & CBZ_SHADER_SPIRV) == CBZ_SHADER_SPIRV) {
+    std::vector<uint8_t> shaderSrcCode;
+    if (LoadFileAsBinary(shaderPath.string(), shaderSrcCode) !=
+        Result::eSuccess) {
+      return Result::eWGPUError;
+    }
+
+    WGPUShaderModuleSPIRVDescriptor shaderCodeDesc = {};
+    shaderCodeDesc.chain.next = nullptr;
+    shaderCodeDesc.chain.sType = WGPUSType_ShaderModuleSPIRVDescriptor;
+    shaderCodeDesc.code =
+        reinterpret_cast<const uint32_t *>(shaderSrcCode.data());
+    shaderCodeDesc.codeSize =
+        static_cast<uint32_t>(shaderSrcCode.size()) / sizeof(uint32_t);
+
+    mModule = wgpuDeviceCreateShaderModule(sDevice, &shaderModuleDesc);
+    if (!mModule) {
+      return Result::eFailure;
+    }
+  } else {
+    std::string shaderSrcCode;
+    if (LoadFileAsText(shaderPath.string(), shaderSrcCode) !=
+        Result::eSuccess) {
+      return Result::eWGPUError;
+    }
+
+    std::string slangSrcCode;
+    if (LoadFileAsText(shaderPath.string(), slangSrcCode) != Result::eSuccess) {
+      return Result::eWGPUError;
+    }
+
+    WGPUShaderModuleWGSLDescriptor shaderCodeDesc = {};
+    shaderCodeDesc.chain.next = nullptr;
+    shaderCodeDesc.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
+    shaderCodeDesc.code = shaderSrcCode.c_str();
+    shaderModuleDesc.nextInChain = &shaderCodeDesc.chain;
+
+    mModule = wgpuDeviceCreateShaderModule(sDevice, &shaderModuleDesc);
+    if (!mModule) {
+      return Result::eFailure;
+    }
   }
 
   return Result::eSuccess;
 }
 
-void ShaderWebGPU::destroy() { 
-    wgpuShaderModuleRelease(mModule); 
-    mModule = NULL;
+void ShaderWebGPU::destroy() {
+  wgpuShaderModuleRelease(mModule);
+  mModule = NULL;
 }
 
 Result GraphicsProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
@@ -1192,18 +1208,19 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   sLogger->set_level(spdlog::level::trace);
   sLogger->set_pattern("[%^%l%$] IRenderer: %v");
 
-  //net::Endpoint cbzEndPoint = {
-  //    net::Address("192.168.1.4"),
-  //    net::Port(6000),
-  //};
+  // net::Endpoint cbzEndPoint = {
+  //     net::Address("192.168.1.4"),
+  //     net::Port(6000),
+  // };
 
-  //sShaderHttpClient = net::httpClientCreate(cbzEndPoint);
-  //if (!sShaderHttpClient) {
-  //  sLogger->error("Failed to connect to shader compilation sever!)");
-  //  return Result::eFailure;
-  //}
+  // sShaderHttpClient = net::httpClientCreate(cbzEndPoint);
+  // if (!sShaderHttpClient) {
+  //   sLogger->error("Failed to connect to shader compilation sever!)");
+  //   return Result::eFailure;
+  // }
 
-  //sLogger->info("Shader compiler backend connected ({}:{})", cbzEndPoint.address.c_str(), cbzEndPoint.port.c_str());
+  // sLogger->info("Shader compiler backend connected ({}:{})",
+  // cbzEndPoint.address.c_str(), cbzEndPoint.port.c_str());
 
 #ifdef WEBGPU_BACKEND_EMSCRIPTEN
   WGPUInstance instance = wgpuCreateInstance(nullptr);
@@ -1420,7 +1437,7 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
 
   // Target struct
   uint8_t target = std::numeric_limits<uint8_t>::max();
-  TargetType targetType = TargetType::eNone;
+  CBZTargetType targetType = CBZ_TARGET_TYPE_NONE;
   // Attachments if graphics
   // WGPURenderPassEncoder renderPassEncoder = nullptr;
   // WGPUComputePassEncoder computePassEncoder = nullptr;
@@ -1440,18 +1457,34 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
   for (uint32_t cmdIdx = 0; cmdIdx < count; cmdIdx++) {
     const ShaderProgramCommand &renderCmd = sortedCmds[cmdIdx];
 
-    // TODO:
-    // End if different target
-    // Begin target
-
     // Begin target encoder
     if (target != renderCmd.target) {
+
+      // End previous pass
+      switch (targetType) {
+      case CBZ_TARGET_TYPE_GRAPHICS: {
+        if (renderPassEncoder != NULL) {
+          wgpuRenderPassEncoderEnd(renderPassEncoder);
+          wgpuRenderPassEncoderRelease(renderPassEncoder);
+        }
+      } break;
+
+      case CBZ_TARGET_TYPE_COMPUTE: {
+        if (computePassEncoder != NULL) {
+          wgpuComputePassEncoderEnd(computePassEncoder);
+          wgpuComputePassEncoderRelease(computePassEncoder);
+        }
+      } break;
+
+      case CBZ_TARGET_TYPE_NONE: {
+      } break;
+      }
+
       target = renderCmd.target;
       targetType = renderCmd.programType;
-
       switch (renderCmd.programType) {
 
-      case TargetType::eCompute: {
+      case CBZ_TARGET_TYPE_COMPUTE: {
         WGPUComputePassDescriptor computePassDesc = {};
         computePassDesc.nextInChain = nullptr;
         computePassDesc.label = "computePassX";
@@ -1461,7 +1494,7 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
             wgpuCommandEncoderBeginComputePass(cmdEncoder, &computePassDesc);
       } break;
 
-      case TargetType::eGraphics: {
+      case CBZ_TARGET_TYPE_GRAPHICS: {
         WGPURenderPassColorAttachment renderPassColorAttachmentDesc = {};
         renderPassColorAttachmentDesc.nextInChain = nullptr;
         renderPassColorAttachmentDesc.view = surfaceTextureView;
@@ -1487,7 +1520,7 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
             wgpuCommandEncoderBeginRenderPass(cmdEncoder, &renderPassDesc);
       }
 
-      case TargetType::eNone: {
+      case CBZ_TARGET_TYPE_NONE: {
       } break;
       }
     }
@@ -1495,7 +1528,7 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
     // Execute cmds
     switch (targetType) {
 
-    case TargetType::eCompute: {
+    case CBZ_TARGET_TYPE_COMPUTE: {
       if (targetSortKey != renderCmd.sortKey) {
         targetSortKey = renderCmd.sortKey;
 
@@ -1524,13 +1557,9 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
 
       wgpuComputePassEncoderDispatchWorkgroups(computePassEncoder, dispatchX,
                                                dispatchY, dispatchZ);
-
-      wgpuComputePassEncoderEnd(computePassEncoder);
-      wgpuComputePassEncoderRelease(computePassEncoder);
-      computePassEncoder = nullptr;
     } break;
 
-    case TargetType::eGraphics: {
+    case CBZ_TARGET_TYPE_GRAPHICS: {
       if (targetSortKey != renderCmd.sortKey) {
         targetSortKey = renderCmd.sortKey;
 
@@ -1584,43 +1613,60 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
           indexCount = 0;
           isIndexed = false;
         }
-
-        if (isIndexed) {
-          wgpuRenderPassEncoderDrawIndexed(renderPassEncoder, indexCount, 1, 0,
-                                           0, 0);
-        } else {
-          wgpuRenderPassEncoderDraw(renderPassEncoder, vertexCount, 1, 0, 0);
-        }
-
-        // TODO: Move to swapchain render target
-        ImGui_ImplWGPU_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-
-        ImGui::Begin("Profiling");
-        ImGui::Text("fps: %3.0f", ImGui::GetIO().Framerate);
-
-        static float vec[3];
-        ImGui::SliderFloat3("Color", vec, 0.0f, 100.0f);
-
-        ImGui::End();
-
-        ImGui::EndFrame();
-        ImGui::Render();
-        ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), renderPassEncoder);
-
-        wgpuRenderPassEncoderEnd(renderPassEncoder);
-        wgpuRenderPassEncoderRelease(renderPassEncoder);
-        renderPassEncoder = nullptr;
       };
 
+      if (isIndexed) {
+        wgpuRenderPassEncoderDrawIndexed(renderPassEncoder, indexCount, 1, 0, 0,
+                                         cmdIdx);
+      } else {
+        wgpuRenderPassEncoderDraw(renderPassEncoder, vertexCount, 1, 0, cmdIdx);
+      }
     } break;
 
-    case TargetType::eNone: {
+    case CBZ_TARGET_TYPE_NONE: {
       sLogger->critical("Uknown render target!");
     } break;
     }
   }
+
+  // End trailing pass
+  switch (targetType) {
+  case CBZ_TARGET_TYPE_GRAPHICS: {
+    if (renderPassEncoder != NULL) {
+      wgpuRenderPassEncoderEnd(renderPassEncoder);
+      wgpuRenderPassEncoderRelease(renderPassEncoder);
+      renderPassEncoder = nullptr;
+    }
+  } break;
+
+  case CBZ_TARGET_TYPE_COMPUTE: {
+    if (computePassEncoder != NULL) {
+      wgpuComputePassEncoderEnd(computePassEncoder);
+      wgpuComputePassEncoderRelease(computePassEncoder);
+      computePassEncoder = nullptr;
+    }
+  } break;
+
+  case CBZ_TARGET_TYPE_NONE:
+    break;
+  }
+
+  // TODO: Move to swapchain render target
+  // ImGui_ImplWGPU_NewFrame();
+  // ImGui_ImplGlfw_NewFrame();
+  // ImGui::NewFrame();
+  //
+  // ImGui::Begin("Profiling");
+  // ImGui::Text("fps: %3.0f", ImGui::GetIO().Framerate);
+  //
+  // static float vec[3];
+  // ImGui::SliderFloat3("Color", vec, 0.0f, 100.0f);
+  //
+  // ImGui::End();
+  //
+  // ImGui::EndFrame();
+  // ImGui::Render();
+  // ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), renderPassEncoder);
 
   WGPUCommandBufferDescriptor cmdDesc = {};
   cmdDesc.nextInChain = nullptr;
@@ -1675,7 +1721,7 @@ void RendererContextWebGPU::indexBufferDestroy(IndexBufferHandle ibh) {
 }
 
 Result RendererContextWebGPU::uniformBufferCreate(UniformHandle uh,
-                                                  UniformType type,
+                                                  CBZUniformType type,
                                                   uint16_t num,
                                                   const void *data) {
   if (sUniformBuffers.size() < uh.idx + 1u) {
@@ -1696,7 +1742,7 @@ void RendererContextWebGPU::uniformBufferDestroy(UniformHandle uh) {
 }
 
 Result RendererContextWebGPU::structuredBufferCreate(StructuredBufferHandle sbh,
-                                                     UniformType type,
+                                                     CBZUniformType type,
                                                      uint32_t elementCount,
                                                      const void *elementData) {
   if (sStorageBuffers.size() < static_cast<uint64_t>(sbh.idx + 1u)) {
@@ -1704,7 +1750,8 @@ Result RendererContextWebGPU::structuredBufferCreate(StructuredBufferHandle sbh,
   }
 
   return sStorageBuffers[sbh.idx].create(
-      type, elementCount, elementData, HandleProvider<StructuredBufferHandle>::getName(sbh));
+      type, elementCount, elementData,
+      HandleProvider<StructuredBufferHandle>::getName(sbh));
 };
 
 void RendererContextWebGPU::structuredBufferUpdate(StructuredBufferHandle sbh,
@@ -1753,9 +1800,9 @@ RendererContextWebGPU::getSampler(TextureBindingDesc texBindingDesc) {
 };
 
 Result RendererContextWebGPU::textureCreate(TextureHandle th,
-                                            TextureFormat format, uint32_t w,
+                                            CBZTextureFormat format, uint32_t w,
                                             uint32_t h, uint32_t depth,
-                                            TextureDimension dimension) {
+                                            CBZTextureDimension dimension) {
   if (sTextures.size() < th.idx + 1u) {
     sTextures.resize(th.idx + 1u);
   }
@@ -1774,12 +1821,13 @@ void RendererContextWebGPU::textureDestroy(TextureHandle th) {
 };
 
 Result RendererContextWebGPU::shaderCreate(ShaderHandle sh,
+                                           CBZShaderFlags flags,
                                            const std::string &path) {
   if (sShaders.size() < sh.idx + 1u) {
     sShaders.resize(sh.idx + 1u);
   }
 
-  return sShaders[sh.idx].create(path);
+  return sShaders[sh.idx].create(path, flags);
 }
 
 void RendererContextWebGPU::shaderDestroy(ShaderHandle sh) {
@@ -1846,48 +1894,46 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
       case BindingType::eUniformBuffer: {
         UniformHandle uh = bindings[i].value.uniformBuffer.handle;
 
-	    const auto &it =
-	  	    std::find_if(shaderBindingDescs.begin(), shaderBindingDescs.end(),
-	  				   [=](const BindingDesc &bindingDesc) {
-	  					 return bindingDesc.name ==
-	  							HandleProvider<UniformHandle>::getName(uh);
-	  				   });
+        const auto &it =
+            std::find_if(shaderBindingDescs.begin(), shaderBindingDescs.end(),
+                         [=](const BindingDesc &bindingDesc) {
+                           return bindingDesc.name ==
+                                  HandleProvider<UniformHandle>::getName(uh);
+                         });
 
         if (it == shaderBindingDescs.end()) {
-            sLogger->error(
-                "Shader program '{}' has no uniform binding named '{}'",
-                HandleProvider<ShaderHandle>::getName(sh),
-                HandleProvider<UniformHandle>::getName(uh));
-            return nullptr;
+          sLogger->error(
+              "Shader program '{}' has no uniform binding named '{}'",
+              HandleProvider<ShaderHandle>::getName(sh),
+              HandleProvider<UniformHandle>::getName(uh));
+          return nullptr;
         }
 
         if (it->elementSize + it->padding > sUniformBuffers[uh.idx].getSize()) {
-            sLogger->error(
-                "Uniform '{}' size too small (< {} bytes); requires 64. Increase elementCount.",
-                HandleProvider<UniformHandle>::getName(uh),
-                sUniformBuffers[uh.idx].getSize(),
-                it->elementSize
-            );
-            return nullptr;
+          sLogger->error("Uniform '{}' size too small (< {} bytes); requires "
+                         "64. Increase elementCount.",
+                         HandleProvider<UniformHandle>::getName(uh),
+                         sUniformBuffers[uh.idx].getSize(), it->elementSize);
+          return nullptr;
         }
 
         if (it->elementSize + it->padding < sUniformBuffers[uh.idx].getSize()) {
-            sLogger->warn(
-                "Uniform '{}' size larger than (< {} bytes); requires {}. Consider Decreasing elementCount.",
-                HandleProvider<UniformHandle>::getName(uh),
-                sUniformBuffers[uh.idx].getSize(),
-                it->elementSize
-            );
+          sLogger->warn("Uniform '{}' size larger than (< {} bytes); requires "
+                        "{}. Consider Decreasing elementCount.",
+                        HandleProvider<UniformHandle>::getName(uh),
+                        sUniformBuffers[uh.idx].getSize(), it->elementSize);
         }
 
-        bindGroupEntries[i] = sUniformBuffers[uh.idx].createBindGroupEntry(it->index);
+        bindGroupEntries[i] =
+            sUniformBuffers[uh.idx].createBindGroupEntry(it->index);
       } break;
+
       case BindingType::eRWStructuredBuffer:
       case BindingType::eStructuredBuffer: {
         switch (bindings[i].value.storageBuffer.valueType) {
-        case UniformType::eUINT:
-        case UniformType::eVec4:
-        case UniformType::eMat4: {
+        case CBZ_UNIFORM_TYPE_UINT:
+        case CBZ_UNIFORM_TYPE_VEC4:
+        case CBZ_UNIFORM_TYPE_MAT4: {
           StructuredBufferHandle sbh = bindings[i].value.storageBuffer.handle;
 
           const auto &it =
@@ -1970,9 +2016,9 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
         bindGroupEntries[i] = entry;
       } break;
 
-      case BindingType::eNone:
+      case BindingType::eNone: {
         sLogger->error("Uknown and unsupported binding!");
-        break;
+      } break;
       }
     }
 

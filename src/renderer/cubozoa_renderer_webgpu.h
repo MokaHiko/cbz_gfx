@@ -1,7 +1,6 @@
 #ifndef CBZ_RENDERER_WGPU_H_
 #define CBZ_RENDERER_WGPU_H_
 
-#include "cubozoa/cubozoa_defines.h"
 #include "cubozoa_irenderer_context.h"
 
 #ifdef __EMSCRIPTEN__
@@ -12,8 +11,10 @@
 #include <webgpu/wgpu.h>
 #endif
 
-#include <glfw3webgpu.h>
+// clang-format off
 #include <webgpu/webgpu.h>
+#include <glfw3webgpu.h>
+// clang-format on
 
 #include <nlohmann/json.hpp>
 
@@ -21,7 +22,7 @@ namespace cbz {
 
 class ShaderWebGPU {
 public:
-  [[nodiscard]] Result create(const std::string &path);
+  [[nodiscard]] Result create(const std::string &path, CBZShaderFlags flags);
   void destroy();
 
   [[nodiscard]] const inline VertexLayout &getVertexLayout() const {
@@ -44,8 +45,8 @@ public:
 
 private:
   struct ShaderOffsets {
-	uint32_t bindingOffset;
-	uint32_t padding; // local padding in struct or array
+    uint32_t bindingOffset;
+    uint32_t padding; // local padding in struct or array
   };
 
   void parseJsonRecursive(const nlohmann::json &varJson, bool isBinding,
@@ -102,7 +103,7 @@ private:
 
 class UniformBufferWebWGPU {
 public:
-  [[nodiscard]] Result create(UniformType type, uint16_t num,
+  [[nodiscard]] Result create(CBZUniformType type, uint16_t num,
                               const void *data = nullptr,
                               const std::string &name = "");
 
@@ -114,8 +115,8 @@ public:
     return UniformTypeGetSize(mElementType) * mElementCount;
   }
 
-  [[nodiscard]] inline UniformType getElementType() const {
-      return mElementType;
+  [[nodiscard]] inline CBZUniformType getElementType() const {
+    return mElementType;
   }
 
   [[nodiscard]] inline WGPUBindGroupEntry
@@ -132,17 +133,18 @@ public:
 private:
   WGPUBuffer mBuffer;
 
-  UniformType mElementType;
+  CBZUniformType mElementType;
   uint16_t mElementCount;
 };
 
 class StorageBufferWebWGPU {
 public:
-  [[nodiscard]] Result create(UniformType type, uint32_t num,
+  [[nodiscard]] Result create(CBZUniformType type, uint32_t num,
                               const void *data = nullptr,
                               const std::string &name = "");
 
-  void update(const void *data, uint32_t elementCount, uint32_t elementOffset = 0);
+  void update(const void *data, uint32_t elementCount,
+              uint32_t elementOffset = 0);
 
   void destroy();
 
@@ -164,7 +166,7 @@ public:
 private:
   WGPUBuffer mBuffer;
 
-  UniformType mElementType;
+  CBZUniformType mElementType;
   uint32_t mElementCount;
 };
 

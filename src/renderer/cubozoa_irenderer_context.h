@@ -19,6 +19,14 @@ public:
     return sItemNames[handle.idx];
   };
 
+  static inline void setName(HandleT handle, const std::string &name) {
+    if (!isValid(handle)) {
+      spdlog::error("Attempting to get name of invalid handle!");
+    }
+
+    sItemNames[handle.idx] = name;
+  };
+
   static inline bool isValid(HandleT handle) {
     if (handle.idx == CBZ_INVALID_HANDLE) {
       return false;
@@ -59,6 +67,19 @@ private:
   static inline std::vector<HandleT> sFreeList;
 };
 
+[[nodiscard]] constexpr uint32_t UniformTypeGetSize(CBZUniformType type) {
+  switch (type) {
+  case CBZ_UNIFORM_TYPE_UINT:
+    return sizeof(uint32_t);
+  case CBZ_UNIFORM_TYPE_VEC4:
+    return sizeof(float) * 4;
+  case CBZ_UNIFORM_TYPE_MAT4:
+    return sizeof(float) * 16;
+  default:
+    return 0;
+  }
+}
+
 enum class BindingType {
   eNone,
 
@@ -90,7 +111,7 @@ struct Binding {
 
   union {
     struct {
-      UniformType valueType;
+      CBZUniformType valueType;
       UniformHandle handle;
     } uniformBuffer;
 
@@ -106,7 +127,7 @@ struct Binding {
 
     struct {
       uint32_t slot;
-      UniformType valueType;
+      CBZUniformType valueType;
       StructuredBufferHandle handle;
     } storageBuffer;
   } value;
@@ -125,7 +146,7 @@ struct ShaderProgramCommand {
       ComputeProgramHandle ph;
     } compute;
   } program;
-  TargetType programType;
+  CBZTargetType programType;
 
   std::vector<Binding> bindings;
 
@@ -157,7 +178,7 @@ public:
   virtual void indexBufferDestroy(IndexBufferHandle ibh) = 0;
 
   [[nodiscard]] virtual Result
-  uniformBufferCreate(UniformHandle uh, UniformType type, uint16_t num,
+  uniformBufferCreate(UniformHandle uh, CBZUniformType type, uint16_t num,
                       const void *data = nullptr) = 0;
 
   virtual void uniformBufferUpdate(UniformHandle uh, void *data,
@@ -166,7 +187,7 @@ public:
   virtual void uniformBufferDestroy(UniformHandle uh) = 0;
 
   [[nodiscard]] virtual Result
-  structuredBufferCreate(StructuredBufferHandle sbh, UniformType type,
+  structuredBufferCreate(StructuredBufferHandle sbh, CBZUniformType type,
                          uint32_t elementCount, const void *data = nullptr) = 0;
 
   virtual void structuredBufferUpdate(StructuredBufferHandle sbh,
@@ -179,16 +200,18 @@ public:
   getSampler(TextureBindingDesc texBindingDesc) = 0;
 
   [[nodiscard]] virtual Result textureCreate(TextureHandle uh,
-                                             TextureFormat format, uint32_t x,
-                                             uint32_t y, uint32_t z,
-                                             TextureDimension dimension) = 0;
+                                             CBZTextureFormat format,
+                                             uint32_t x, uint32_t y, uint32_t z,
+                                             CBZTextureDimension dimension) = 0;
 
   virtual void textureUpdate(TextureHandle th, void *data, uint32_t count) = 0;
 
   virtual void textureDestroy(TextureHandle th) = 0;
 
   [[nodiscard]] virtual Result shaderCreate(ShaderHandle sh,
+                                            CBZShaderFlags flags,
                                             const std::string &path) = 0;
+
   virtual void shaderDestroy(ShaderHandle sh) = 0;
 
   [[nodiscard]] virtual Result graphicsProgramCreate(GraphicsProgramHandle gph,

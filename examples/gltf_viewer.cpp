@@ -1,4 +1,19 @@
-#include "GLFW/glfw3.h"
+// ======================================================================================
+// RTWeekend Example Renderer
+// --------------------------------------------------------------------------------------
+// This is a minimal example of voxel ray tracing using the Cubozoa (cbz)
+// rendering API.
+//
+// Features:
+// - Ray tracing implemented via compute shader (`voxel_raytracer.slang`)
+// - Camera controls: WASD for horizontal movement, Space/Shift for vertical
+// movement
+// - Output written to a structured buffer as RGBA32F, then blitted to screen
+// Purpose:
+// - Demonstrates compute-based rendering pipeline
+// - Serves as a reference for structured buffer usage, compute dispatch, and
+// fullscreen blit
+// ======================================================================================
 #include "cubozoa/cubozoa_defines.h"
 #include <cubozoa/cubozoa.h>
 
@@ -12,128 +27,167 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-std::vector<float> vertices = {
-    // x,   y,     z,   normal,           uv
-    -1.0f, 1.0f,  0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, // Vertex 1
-    1.0f,  1.0f,  0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, // Vertex 2
-    1.0f,  -1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, // Vertex 4
-    -1.0f, -1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, // Vertex 3
+#ifdef __EMSCRIPTEN__
+#include <emscripten/html5.h>
+#endif
+
+#define GLM_FORCE_RIGHT_HANDED
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/ext.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+#include <vector>
+
+static std::vector<float> sQuadVertices = {
+    // x,   y,     z,   uv
+    -1.0f, 1.0f,  0.0f, 0.0f, 0.0f, // Vertex 1
+    1.0f,  1.0f,  0.0f, 1.0f, 0.0f, // Vertex 2
+    1.0f,  -1.0f, 0.0f, 1.0f, 1.0f, // Vertex 4
+    -1.0f, -1.0f, 0.0f, 0.0f, 1.0f, // Vertex 3
 };
 
-std::vector<uint16_t> indices = {
+static std::vector<uint16_t> sQuadIndices = {
     0, 1, 2, // Triangle #0 connects points #0, #1 and #2
     0, 2, 3  // Triangle #1 connects points #0, #2 and #3
 };
 
-class GltfViewer {
-public:
-  void init(cbz::NetworkStatus netStatus = cbz::NetworkStatus::eClient) {
+struct ColorRGBA8 {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+  uint8_t a;
+};
 
-    if (cbz::init({"GltfViewer", 1280, 720, netStatus}) !=
+static constexpr uint32_t kWidth = 854;
+static constexpr uint32_t kHeight = 480;
+
+constexpr glm::vec3 kVec3Up = {0.0, 1.0, 0.0};
+constexpr glm::vec3 kVec3Right = {1.0, 0.0, 0.0};
+
+class GLTFViewer {
+public:
+  GLTFViewer(CBZNetworkStatus netStatus = CBZ_NETWORK_CLIENT) {
+    if (cbz::Init({"GLTFViewer", kWidth, kHeight, netStatus}) !=
         cbz::Result::eSuccess) {
       exit(0);
     }
 
-    mLitSH = cbz::ShaderCreate("assets/shaders/gltf_viewer.slang");
-    mLitPH = cbz::GraphicsProgramCreate(mLitSH);
+    // --- Reset ---
+    mLastTime = 0.0f;
+    mTime = 1.0f;
+    mFrameCtr = 0;
+    mDeltaTime = 0.0f;
 
-    cbz::VertexLayout layout;
-    layout.begin(cbz::VertexStepMode::eVertex);
-    layout.push_attribute(cbz::VertexAttributeType::ePosition,
-                          cbz::VertexFormat::eFloat32x3);
-    layout.push_attribute(cbz::VertexAttributeType::eNormal,
-                          cbz::VertexFormat::eFloat32x3);
-    layout.push_attribute(cbz::VertexAttributeType::eTexCoord0,
-                          cbz::VertexFormat::eFloat32x2);
+    // --- Blit Pipeline Setup ---
+    // Create blit program
+    mBlitSH = cbz::ShaderCreate("assets/shaders/lit.wgsl", CBZ_SHADER_WGLSL);
+    mBlitPH = cbz::GraphicsProgramCreate(mBlitSH);
+
+    // Create vertex layout
+    cbz::VertexLayout layout = {};
+    layout.begin(CBZ_VERTEX_STEP_MODE_VERTEX);
+    layout.push_attribute(CBZ_VERTEX_ATTRIBUTE_POSITION,
+                          CBZ_VERTEX_FORMAT_FLOAT32X3);
+    layout.push_attribute(CBZ_VERTEX_ATTRIBUTE_TEXCOORD0,
+                          CBZ_VERTEX_FORMAT_FLOAT32X2);
     layout.end();
 
+    // Create full screen quad vertex and index buffers
     mQuadVBH = cbz::VertexBufferCreate(
-        layout, static_cast<uint32_t>(vertices.size()), vertices.data());
+        layout, static_cast<uint32_t>(sQuadVertices.size()),
+        sQuadVertices.data());
 
-    mQuadIBH = cbz::IndexBufferCreate(cbz::IndexFormat::eUint16,
-                                      static_cast<uint32_t>(indices.size()),
-                                      indices.data());
+    mQuadIBH = cbz::IndexBufferCreate(
+        IndexFormat::eUint16, static_cast<uint32_t>(sQuadIndices.size()),
+        sQuadIndices.data());
 
-    mAlbedoTH =
-        cbz::Texture2DCreate(cbz::TextureFormat::eRGBA8Unorm, 1, 1, "albedo");
+    // Create blit texture
+    mAlbedoTH = cbz::Texture2DCreate(CBZ_TEXTURE_FORMAT_RGBA8UNORM, kWidth,
+                                     kHeight, "blitTexture");
 
-    std::array<uint8_t, 4> color = {255, 255, 255, 255};
-    cbz::Texture2DUpdate(mAlbedoTH, color.data(), 1);
+    static std::array<ColorRGBA8, kWidth * kHeight> blit = {};
+    for (uint32_t y = 0; y < kHeight; y++) {
+      for (uint32_t x = 0; x < kWidth; x++) {
+        blit[y * kWidth + x] =
+            ColorRGBA8{static_cast<uint8_t>(x * 255 / (kWidth - 1)),
+                       static_cast<uint8_t>(y * 255 / (kHeight - 1)), 0, 255};
+      }
+    }
 
-    mAlbedoSamplerUH =
-        cbz::UniformCreate("albedoSampler", cbz::UniformType::eSampler);
+    cbz::Texture2DUpdate(mAlbedoTH, blit.data(), kWidth * kHeight);
+  }
+
+  ~GLTFViewer() {
+    // Destroy common resources
+    cbz::TextureDestroy(mAlbedoTH);
+
+    // Destroy blit resources
+    cbz::VertexBufferDestroy(mQuadVBH);
+    cbz::IndexBufferDestroy(mQuadIBH);
+    cbz::GraphicsProgramDestroy(mBlitPH);
+    cbz::ShaderDestroy(mBlitSH);
+
+    cbz::Shutdown();
+    mDeltaTime = 0;
   }
 
   void update() {
-    uint8_t r = (uint8_t)(glm::sin(glfwGetTime()) * 255.0f);
-    uint8_t g = (uint8_t)(glm::cos(glfwGetTime()) * 255.0f);
-    std::array<uint8_t, 4> color = {r, g, 255, 255};
-    cbz::Texture2DUpdate(mAlbedoTH, color.data(), 1);
+    // mLastTime = mTime;
+    // // mTime = glfwGetTime();
+    // mDeltaTime = mTime - mLastTime;
 
-    static glm::vec3 position{0.0};
-    glm::mat4 model = glm::translate(glm::mat4(1.0), position);
-    position.x += glfwGetTime() * 0.001f;
+    // // --- Blit pass ---
+    for (int i = -5; i <= 5; i++) {
+      // Set quad vertex and index buffers
+      cbz::VertexBufferSet(mQuadVBH);
+      cbz::IndexBufferSet(mQuadIBH);
 
-    glm::mat4 view = glm::lookAt(glm::vec3(0.0, 0.0f, 5.0f), glm::vec3(0.0),
-                                 glm::vec3(0.0f, 1.0f, 0.0f));
+      cbz::TextureSet(CBZ_TEXTURE_0, mAlbedoTH);
 
-    glm::mat4 proj =
-        glm::perspective(glm::radians(90.0), 16.0 / 9.0, 0.1, 1000.0);
+      // Set graphics transform to identity
+      glm::mat4 model = glm::mat4(1.0f);
+      model = glm::translate(model, glm::vec3(i * 3, 0.0f, -8.0f));
 
-    glm::mat4 transform = proj * view * model;
-    transform = glm::transpose(transform);
-    cbz::TransformSet(glm::value_ptr(transform));
+      model = glm::scale(
+          model, glm::vec3(glm::sin((float)mFrameCtr * 0.05 * glm::radians(30.0f))));
 
-    cbz::TextureSet(mAlbedoTH, mAlbedoSamplerUH,
-                    {cbz::FilterMode::eLinear, cbz::AddressMode::eClampToEdge});
+      glm::mat4 proj =
+          glm::perspective(glm::radians(90.0f), 16.0f / 9.0f, 0.1f, 1000.0f);
 
-    cbz::UniformSet();
+      glm::mat4 transform = proj * model;
+      cbz::TransformSet(glm::value_ptr(transform));
 
-    cbz::VertexBufferSet(mQuadVBH);
-    cbz::IndexBufferSet(mQuadIBH);
+      // Submit to graphics target
+      cbz::Submit(0, mBlitPH);
+    }
 
-    cbz::Submit(0, mLitPH);
     cbz::Frame();
-  }
-
-  void shutdown() {
-    cbz::UniformDestroy(mAlbedoSamplerUH);
-    cbz::TextureDestroy(mAlbedoTH);
-
-    cbz::ShaderDestroy(mLitSH);
-    cbz::GraphicsProgramDestroy(mLitPH);
-    cbz::VertexBufferDestroy(mQuadVBH);
-    cbz::IndexBufferDestroy(mQuadIBH);
-
-    cbz::Shutdown();
+    mFrameCtr++;
   }
 
 private:
-  cbz::ShaderHandle mLitSH;
-  cbz::GraphicsProgramHandle mLitPH;
-
+  // Blit resources
+  cbz::ShaderHandle mBlitSH;
+  cbz::GraphicsProgramHandle mBlitPH;
   cbz::VertexBufferHandle mQuadVBH;
   cbz::IndexBufferHandle mQuadIBH;
-
   cbz::TextureHandle mAlbedoTH;
-  cbz::UniformHandle mAlbedoSamplerUH;
+
+  // Application resources
+  float mTime;
+  float mLastTime;
+  float mDeltaTime;
+  uint32_t mFrameCtr;
 };
 
 int main(int argc, char **argv) {
-  if (argc > 2) {
-  }
-
   for (int i = 0; i < argc; i++) {
     printf("%s", argv[i]);
   }
 
-  GltfViewer app = {};
-
-  if (argc > 1) {
-    app.init(cbz::NetworkStatus::eHost);
-  } else {
-    app.init(cbz::NetworkStatus::eClient);
-  }
+  GLTFViewer app(argc > 1 ? CBZNetworkStatus::CBZ_NETWORK_HOST
+                          : CBZNetworkStatus::CBZ_NETWORK_CLIENT);
 
 #ifndef __EMSCRIPTEN__
   while (true) {
@@ -143,12 +197,10 @@ int main(int argc, char **argv) {
   emscripten_set_main_loop_arg(
       [](void *userData) {
         static int i = 0;
-        GltfViewer *app = reinterpret_cast<GltfViewer *>(userData);
+        GLTFViewer *app = reinterpret_cast<GLTFViewer *>(userData);
         app->update();
       },
       (void *)&app, // value sent to the 'userData' arg of the callback
       0, true);
 #endif
-
-  app.shutdown();
 }

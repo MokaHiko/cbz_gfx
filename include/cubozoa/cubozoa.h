@@ -10,14 +10,14 @@ CBZ_API struct InitDesc {
   uint32_t width;
   uint32_t height;
 
-  NetworkStatus netStatus;
+  CBZNetworkStatus netStatus;
 };
 
 CBZ_API Result Init(InitDesc initDesc);
 
 [[nodiscard]] CBZ_API VertexBufferHandle
 VertexBufferCreate(const VertexLayout &vertexLayout, uint32_t vertexCount,
-                   const void *data = nullptr, const std::string &name = "");
+                   const void *data = nullptr, const char *name = "");
 
 CBZ_API void VertexBufferSet(VertexBufferHandle vbh);
 
@@ -25,29 +25,29 @@ CBZ_API void VertexBufferDestroy(VertexBufferHandle vbh);
 
 [[nodiscard]] CBZ_API IndexBufferHandle
 IndexBufferCreate(IndexFormat format, uint32_t num, const void *data = nullptr,
-                  const std::string &name = "");
+                  const char *name = "");
 
 CBZ_API void IndexBufferSet(IndexBufferHandle ibh);
 
 CBZ_API void IndexBufferDestroy(IndexBufferHandle ibh);
 
 [[nodiscard]] CBZ_API StructuredBufferHandle StructuredBufferCreate(
-    UniformType type, uint32_t elementCount, const void *elementData = nullptr,
-    const std::string &name = "");
+    CBZUniformType type, uint32_t elementCount, const void *elementData = nullptr,
+    const char *name = "");
 
 void StructuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,
                             const void *data, uint32_t offset = 0);
 
-CBZ_API void StructuredBufferSet(BufferSlot slot, StructuredBufferHandle sbh,
-                                 bool dynamic = false);
+CBZ_API void StructuredBufferSet(CBZBufferSlot slot, StructuredBufferHandle sbh,
+                                 CBZBool32 dynamic = false);
 
 CBZ_API void StructuredBufferDestroy(StructuredBufferHandle ibh);
 
 /// @brief Creates a uniform.
 /// @note The uniform name must match the name used in the shader exactly.
 /// mapping).
-[[nodiscard]] CBZ_API UniformHandle UniformCreate(const std::string &name,
-                                                  UniformType type,
+[[nodiscard]] CBZ_API UniformHandle UniformCreate(const char *name,
+                                                  CBZUniformType type,
                                                   uint16_t num = 1);
 
 /// @brief Updates a uniform.
@@ -57,28 +57,34 @@ CBZ_API void UniformSet(UniformHandle uh, void *data, uint16_t num = 0);
 /// @brief Destroys a uniform.
 CBZ_API void UniformDestroy(UniformHandle uh);
 
-[[nodiscard]] CBZ_API TextureHandle Texture2DCreate(
-    TextureFormat format, uint32_t w, uint32_t h, const std::string &name = "");
+[[nodiscard]] CBZ_API TextureHandle Texture2DCreate(CBZTextureFormat format,
+                                                    uint32_t w, uint32_t h,
+                                                    const char *name = "");
 
 CBZ_API void Texture2DUpdate(TextureHandle th, void *data, uint32_t count);
 
-CBZ_API void TextureSet(TextureSlot slot, TextureHandle th,
+CBZ_API void TextureSet(CBZTextureSlot slot, TextureHandle th,
                         TextureBindingDesc desc = {});
 
 void TextureDestroy(TextureHandle th);
 
-[[nodiscard]] CBZ_API ShaderHandle ShaderCreate(const std::string &path,
-                                                const std::string &name = "");
+[[nodiscard]] CBZ_API ShaderHandle ShaderCreate(const char *path,
+                                                int flags = 0);
+
+CBZ_API void ShaderSetName(ShaderHandle sh, const char *name, uint32_t len);
 
 CBZ_API void ShaderDestroy(ShaderHandle sh);
 
 [[nodiscard]] CBZ_API GraphicsProgramHandle
-GraphicsProgramCreate(ShaderHandle sh, const std::string &name = "");
+GraphicsProgramCreate(ShaderHandle sh, int flags = 0);
+
+CBZ_API void GraphicsProgramSetName(GraphicsProgramHandle gph, const char *name,
+                                    uint32_t len);
 
 CBZ_API void GraphicsProgramDestroy(GraphicsProgramHandle gph);
 
 [[nodiscard]] CBZ_API ComputeProgramHandle
-ComputeProgramCreate(ShaderHandle sh, const std::string &name = "");
+ComputeProgramCreate(ShaderHandle sh, const char *name = "");
 
 CBZ_API void ComputeProgramDestroy(ComputeProgramHandle gph);
 
@@ -108,7 +114,7 @@ CBZ_API void Submit(uint8_t target, GraphicsProgramHandle gph);
 CBZ_API void Submit(uint8_t target, ComputeProgramHandle cph, uint32_t x,
                     uint32_t y, uint32_t z);
 
-CBZ_API bool Frame();
+CBZ_API CBZBool32 Frame();
 
 CBZ_API void Shutdown();
 
@@ -241,8 +247,18 @@ enum class Key {
 };
 
 // Input functions
-[[nodiscard]] CBZ_API bool IsKeyDown(Key key);
+[[nodiscard]] CBZ_API CBZBool32 IsKeyDown(Key key);
 
 }; // namespace cbz
+
+// TODO: Make C bindings
+// --- C bindings ---
+#ifdef __cplusplus
+extern "C" { // Ensure C linkage compatibility
+#endif
+
+#ifdef __cplusplus
+} // End extern "C"
+#endif
 
 #endif

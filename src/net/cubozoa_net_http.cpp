@@ -1,5 +1,4 @@
 #include "cubozoa/net/cubozoa_net_http.h"
-#include "asio/buffer.hpp"
 #include "spdlog/spdlog.h"
 
 #ifdef WEBGPU_BACKEND_WGPU

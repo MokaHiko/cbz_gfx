@@ -41,6 +41,7 @@ Address::Address(const char *addrString) {
 
 const char *Address::c_str() const { return mStringBuffer; }
 
+#ifdef WEBGPU_BACKEND_WGPU
 class NetworkingContextNativeClient {
 public:
   NetworkingContextNativeClient() : mResolver(mIo), mSocket(mIo) {}
@@ -125,6 +126,21 @@ private:
   asio::ip::tcp::acceptor mAcceptor;
   asio::ip::tcp::socket mSocket;
 };
+#endif // WEBGPU_BACKEND_WGPU
+
+#ifdef WEBGPU_BACKEND_EMSCRIPTEN
+class NetworkingContextServer {
+public:
+  Result start(Port _) {
+    return Result::eSuccess;
+  }
+
+  std::string makeDayTimeString() const {
+    time_t now = std::time(0);
+    return std::ctime(&now);
+  }
+};
+#endif // WEBGPU_BACKEND_EMSCRIPTEN
 
 Address serverAddress("localhost");
 Port port = 13;

@@ -3,14 +3,307 @@
 
 #include <cstdint>
 
+// TODO: Remove stl from public fns
+#include <vector>
+
+#ifndef CBZ_NULLABLE
+#ifdef __clang__
+#define CBZ_NULLABLE _Nullable
+#else
+#define CBZ_NULLABLE
+#endif
+#endif
+
+#ifndef CBZ_NOT_NULL
+#ifdef __clang__
+#define CBZ_NOT_NULL _Nonnull
+#else
+#define CBZ_NOT_NULL
+#endif
+#endif
+
+#ifndef CBZ_NO_DISCARD
+#ifdef __clang__
+#define CBZ_NO_DISCARD [[nodiscard]]
+#else
+#define CBZ_NO_DISCARD
+#endif
+#endif
+
+#ifdef CBZ_EXPORTS
+#ifdef CBZ_WIN32
+#define CBZ_API __declspec(dllexport)
+#else
+#define CBZ_API
+#endif
+#else
+#define CBZ_API
+#endif
+
+#if defined(_MSC_VER)
+#define CBZ_NO_VTABLE __declspec(novtable)
+#else
+#define CBZ_NO_VTABLE
+#endif
+
+typedef uint32_t CBZBool32;
+static CBZBool32 CBZ_TRUE = UINT32_MAX;
+static CBZBool32 CBZ_FALSE = 0;
+
 namespace cbz {
 
-enum class NetworkStatus {
-  eNone,
-  eHost,
-  eClient,
+enum class Result {
+  eSuccess = 0,
+  eFailure = 1,
+
+  eFileError,
+
+  eGLFWError,
+  eWGPUError,
+  eSlangError,
+
+  eNetworkFailure,
 };
 
+}
+
+// @ note one to one mapping with 'WGPUVertexFormat'
+typedef enum {
+  CBZ_VERTEX_FORMAT_UNDEFINED = 0X00000000,
+  CBZ_VERTEX_FORMAT_UINT8X2 = 0X00000001,
+  CBZ_VERTEX_FORMAT_UINT8X4 = 0X00000002,
+  CBZ_VERTEX_FORMAT_SINT8X2 = 0X00000003,
+  CBZ_VERTEX_FORMAT_SINT8X4 = 0X00000004,
+  CBZ_VERTEX_FORMAT_UNORM8X2 = 0X00000005,
+  CBZ_VERTEX_FORMAT_UNORM8X4 = 0X00000006,
+  CBZ_VERTEX_FORMAT_SNORM8X2 = 0X00000007,
+  CBZ_VERTEX_FORMAT_SNORM8X4 = 0X00000008,
+  CBZ_VERTEX_FORMAT_UINT16X2 = 0X00000009,
+  CBZ_VERTEX_FORMAT_UINT16X4 = 0X0000000A,
+  CBZ_VERTEX_FORMAT_SINT16X2 = 0X0000000B,
+  CBZ_VERTEX_FORMAT_SINT16X4 = 0X0000000C,
+  CBZ_VERTEX_FORMAT_UNORM16X2 = 0X0000000D,
+  CBZ_VERTEX_FORMAT_UNORM16X4 = 0X0000000E,
+  CBZ_VERTEX_FORMAT_SNORM16X2 = 0X0000000F,
+  CBZ_VERTEX_FORMAT_SNORM16X4 = 0X00000010,
+  CBZ_VERTEX_FORMAT_FLOAT16X2 = 0X00000011,
+  CBZ_VERTEX_FORMAT_FLOAT16X4 = 0X00000012,
+  CBZ_VERTEX_FORMAT_FLOAT32 = 0X00000013,
+  CBZ_VERTEX_FORMAT_FLOAT32X2 = 0X00000014,
+  CBZ_VERTEX_FORMAT_FLOAT32X3 = 0X00000015,
+  CBZ_VERTEX_FORMAT_FLOAT32X4 = 0X00000016,
+  CBZ_VERTEX_FORMAT_UINT32 = 0X00000017,
+  CBZ_VERTEX_FORMAT_UINT32X2 = 0X00000018,
+  CBZ_VERTEX_FORMAT_UINT32X3 = 0X00000019,
+  CBZ_VERTEX_FORMAT_UINT32X4 = 0X0000001A,
+  CBZ_VERTEX_FORMAT_SINT32 = 0X0000001B,
+  CBZ_VERTEX_FORMAT_SINT32X2 = 0X0000001C,
+  CBZ_VERTEX_FORMAT_SINT32X3 = 0X0000001D,
+  CBZ_VERTEX_FORMAT_SINT32X4 = 0X0000001E,
+  CBZ_VERTEX_FORMAT_COUNT,
+
+  CBZ_VERTEX_FORMAT_FORCE_32 = 0xFFFFFFFFu,
+} CBZVertexFormat;
+
+// @note one to one mapping with 'WGPUVertexStepMode'
+typedef enum {
+  CBZ_VERTEX_STEP_MODE_VERTEX = 0x00000000,
+  CBZ_VERTEX_STEP_INSTANCE = 0x00000001,
+  // eVertexBufferNotUsed = 0x00000002,
+
+  CBZ_VERTEX_STEP_FORCE_32 = 0xFFFFFFFFu,
+} CBZVertexStepMode;
+
+typedef enum {
+  CBZ_VERTEX_ATTRIBUTE_POSITION = 0,
+  CBZ_VERTEX_ATTRIBUTE_NORMAL,
+  CBZ_VERTEX_ATTRIBUTE_TEXCOORD0,
+  // eColor,
+  // eTangent,
+  // eJoints,
+  // eWeights,
+  //
+  // eCustom,
+  CBZ_VERTEX_ATTRIBUTE_COUNT,
+  CBZ_VERTEX_ATTRIBUTE_FORCE_32 = 0xFFFFFFFFu,
+} CBZVertexAttributeType;
+
+// @ note one to one mapping with 'WGPUIndexFormat'
+enum class IndexFormat : uint32_t {
+  eUndefined = 0x00000000,
+  eUint16 = 0x00000001,
+  eUint32 = 0x00000002,
+};
+
+// @note one to one mapping with 'WGPUTextureFormat'
+typedef enum {
+  CBZ_TEXTURE_FORMAT_UNDEFINED = 0X00000000,
+  CBZ_TEXTURE_FORMAT_R8UNORM = 0X00000001,
+  CBZ_TEXTURE_FORMAT_R8SNORM = 0X00000002,
+  CBZ_TEXTURE_FORMAT_R8UINT = 0X00000003,
+  CBZ_TEXTURE_FORMAT_R8SINT = 0X00000004,
+  CBZ_TEXTURE_FORMAT_R16UINT = 0X00000005,
+  CBZ_TEXTURE_FORMAT_R16SINT = 0X00000006,
+  CBZ_TEXTURE_FORMAT_R16FLOAT = 0X00000007,
+  CBZ_TEXTURE_FORMAT_RG8UNORM = 0X00000008,
+  CBZ_TEXTURE_FORMAT_RG8SNORM = 0X00000009,
+  CBZ_TEXTURE_FORMAT_RG8UINT = 0X0000000A,
+  CBZ_TEXTURE_FORMAT_RG8SINT = 0X0000000B,
+  CBZ_TEXTURE_FORMAT_R32FLOAT = 0X0000000C,
+  CBZ_TEXTURE_FORMAT_R32UINT = 0X0000000D,
+  CBZ_TEXTURE_FORMAT_R32SINT = 0X0000000E,
+  CBZ_TEXTURE_FORMAT_RG16UINT = 0X0000000F,
+  CBZ_TEXTURE_FORMAT_RG16SINT = 0X00000010,
+  CBZ_TEXTURE_FORMAT_RG16FLOAT = 0X00000011,
+  CBZ_TEXTURE_FORMAT_RGBA8UNORM = 0X00000012,
+  CBZ_TEXTURE_FORMAT_RGBA8UNORMSRGB = 0X00000013,
+  CBZ_TEXTURE_FORMAT_RGBA8SNORM = 0X00000014,
+  CBZ_TEXTURE_FORMAT_RGBA8UINT = 0X00000015,
+  CBZ_TEXTURE_FORMAT_RGBA8SINT = 0X00000016,
+  CBZ_TEXTURE_FORMAT_BGRA8UNORM = 0X00000017,
+  CBZ_TEXTURE_FORMAT_BGRA8UNORMSRGB = 0X00000018,
+  CBZ_TEXTURE_FORMAT_RGB10A2UINT = 0X00000019,
+  CBZ_TEXTURE_FORMAT_RGB10A2UNORM = 0X0000001A,
+  CBZ_TEXTURE_FORMAT_RG11B10UFLOAT = 0X0000001B,
+  CBZ_TEXTURE_FORMAT_RGB9E5UFLOAT = 0X0000001C,
+  CBZ_TEXTURE_FORMAT_RG32FLOAT = 0X0000001D,
+  CBZ_TEXTURE_FORMAT_RG32UINT = 0X0000001E,
+  CBZ_TEXTURE_FORMAT_RG32SINT = 0X0000001F,
+  CBZ_TEXTURE_FORMAT_RGBA16UINT = 0X00000020,
+  CBZ_TEXTURE_FORMAT_RGBA16SINT = 0X00000021,
+  CBZ_TEXTURE_FORMAT_RGBA16FLOAT = 0X00000022,
+  CBZ_TEXTURE_FORMAT_RGBA32FLOAT = 0X00000023,
+  CBZ_TEXTURE_FORMAT_RGBA32UINT = 0X00000024,
+  CBZ_TEXTURE_FORMAT_RGBA32SINT = 0X00000025,
+  CBZ_TEXTURE_FORMAT_STENCIL8 = 0X00000026,
+  CBZ_TEXTURE_FORMAT_DEPTH16UNORM = 0X00000027,
+  CBZ_TEXTURE_FORMAT_DEPTH24PLUS = 0X00000028,
+  CBZ_TEXTURE_FORMAT_DEPTH24PLUSSTENCIL8 = 0X00000029,
+  CBZ_TEXTURE_FORMAT_DEPTH32FLOAT = 0X0000002A,
+  CBZ_TEXTURE_FORMAT_DEPTH32FLOATSTENCIL8 = 0X0000002B,
+  CBZ_TEXTURE_FORMAT_BC1RGBAUNORM = 0X0000002C,
+  CBZ_TEXTURE_FORMAT_BC1RGBAUNORMSRGB = 0X0000002D,
+  CBZ_TEXTURE_FORMAT_BC2RGBAUNORM = 0X0000002E,
+  CBZ_TEXTURE_FORMAT_BC2RGBAUNORMSRGB = 0X0000002F,
+  CBZ_TEXTURE_FORMAT_BC3RGBAUNORM = 0X00000030,
+  CBZ_TEXTURE_FORMAT_BC3RGBAUNORMSRGB = 0X00000031,
+  CBZ_TEXTURE_FORMAT_BC4RUNORM = 0X00000032,
+  CBZ_TEXTURE_FORMAT_BC4RSNORM = 0X00000033,
+  CBZ_TEXTURE_FORMAT_BC5RGUNORM = 0X00000034,
+  CBZ_TEXTURE_FORMAT_BC5RGSNORM = 0X00000035,
+  CBZ_TEXTURE_FORMAT_BC6HRGBUFLOAT = 0X00000036,
+  CBZ_TEXTURE_FORMAT_BC6HRGBFLOAT = 0X00000037,
+  CBZ_TEXTURE_FORMAT_BC7RGBAUNORM = 0X00000038,
+  CBZ_TEXTURE_FORMAT_BC7RGBAUNORMSRGB = 0X00000039,
+  CBZ_TEXTURE_FORMAT_ETC2RGB8UNORM = 0X0000003A,
+  CBZ_TEXTURE_FORMAT_ETC2RGB8UNORMSRGB = 0X0000003B,
+  CBZ_TEXTURE_FORMAT_ETC2RGB8A1UNORM = 0X0000003C,
+  CBZ_TEXTURE_FORMAT_ETC2RGB8A1UNORMSRGB = 0X0000003D,
+  CBZ_TEXTURE_FORMAT_ETC2RGBA8UNORM = 0X0000003E,
+  CBZ_TEXTURE_FORMAT_ETC2RGBA8UNORMSRGB = 0X0000003F,
+  CBZ_TEXTURE_FORMAT_EACR11UNORM = 0X00000040,
+  CBZ_TEXTURE_FORMAT_EACR11SNORM = 0X00000041,
+  CBZ_TEXTURE_FORMAT_EACRG11UNORM = 0X00000042,
+  CBZ_TEXTURE_FORMAT_EACRG11SNORM = 0X00000043,
+  CBZ_TEXTURE_FORMAT_ASTC4X4UNORM = 0X00000044,
+  CBZ_TEXTURE_FORMAT_ASTC4X4UNORMSRGB = 0X00000045,
+  CBZ_TEXTURE_FORMAT_ASTC5X4UNORM = 0X00000046,
+  CBZ_TEXTURE_FORMAT_ASTC5X4UNORMSRGB = 0X00000047,
+  CBZ_TEXTURE_FORMAT_ASTC5X5UNORM = 0X00000048,
+  CBZ_TEXTURE_FORMAT_ASTC5X5UNORMSRGB = 0X00000049,
+  CBZ_TEXTURE_FORMAT_ASTC6X5UNORM = 0X0000004A,
+  CBZ_TEXTURE_FORMAT_ASTC6X5UNORMSRGB = 0X0000004B,
+  CBZ_TEXTURE_FORMAT_ASTC6X6UNORM = 0X0000004C,
+  CBZ_TEXTURE_FORMAT_ASTC6X6UNORMSRGB = 0X0000004D,
+  CBZ_TEXTURE_FORMAT_ASTC8X5UNORM = 0X0000004E,
+  CBZ_TEXTURE_FORMAT_ASTC8X5UNORMSRGB = 0X0000004F,
+  CBZ_TEXTURE_FORMAT_ASTC8X6UNORM = 0X00000050,
+  CBZ_TEXTURE_FORMAT_ASTC8X6UNORMSRGB = 0X00000051,
+  CBZ_TEXTURE_FORMAT_ASTC8X8UNORM = 0X00000052,
+  CBZ_TEXTURE_FORMAT_ASTC8X8UNORMSRGB = 0X00000053,
+  CBZ_TEXTURE_FORMAT_ASTC10X5UNORM = 0X00000054,
+  CBZ_TEXTURE_FORMAT_ASTC10X5UNORMSRGB = 0X00000055,
+  CBZ_TEXTURE_FORMAT_ASTC10X6UNORM = 0X00000056,
+  CBZ_TEXTURE_FORMAT_ASTC10X6UNORMSRGB = 0X00000057,
+  CBZ_TEXTURE_FORMAT_ASTC10X8UNORM = 0X00000058,
+  CBZ_TEXTURE_FORMAT_ASTC10X8UNORMSRGB = 0X00000059,
+  CBZ_TEXTURE_FORMAT_ASTC10X10UNORM = 0X0000005A,
+  CBZ_TEXTURE_FORMAT_ASTC10X10UNORMSRGB = 0X0000005B,
+  CBZ_TEXTURE_FORMAT_ASTC12X10UNORM = 0X0000005C,
+  CBZ_TEXTURE_FORMAT_ASTC12X10UNORMSRGB = 0X0000005D,
+  CBZ_TEXTURE_FORMAT_ASTC12X12UNORM = 0X0000005E,
+  CBZ_TEXTURE_FORMAT_ASTC12X12UNORMSRGB = 0X0000005F,
+} CBZTextureFormat;
+
+// @note one to one mapping with 'WGPUTextureDimension'
+typedef enum {
+  CBZ_TEXTURE_DIMENSION_1D = 0x00000000,
+  CBZ_TEXTURE_DIMENSION_2D = 0x00000001,
+  CBZ_TEXTURE_DIMENSION_3D = 0x00000002,
+} CBZTextureDimension;
+
+// @note one to one mapping with 'WGPUAddressMode'
+typedef enum {
+  CBZ_ADDRESS_MODE_REPEAT = 0X00000000,
+  CBZ_ADDRESS_MODE_MIRRORREPEAT = 0X00000001,
+  CBZ_ADDRESS_MODE_CLAMPTOEDGE = 0X00000002,
+
+  CBZ_ADDRESS_MODE_COUNT,
+} CBZAddressMode;
+
+// @note one to one mapping with 'WGPUFilterMode'
+typedef enum {
+  CBZ_FILTER_MODE_NEAREST = 0X00000000,
+  CBZ_FILTER_MODE_LINEAR = 0X00000001,
+  CBZ_FILTER_MODE_COUNT,
+} CBZFilterMode;
+
+typedef enum {
+  CBZ_SHADER_NONE,
+  CBZ_SHADER_VERTEX = 1 << 0,
+  CBZ_SHADER_FRAGMENT = 1 << 1,
+
+  CBZ_SHADER_SPIRV = 1 << 2,
+  CBZ_SHADER_WGLSL = 1 << 3,
+
+  CBZ_SHADER_FORCE_32 = 0xFFFFFFFFu,
+} CBZShaderFlags;
+
+typedef enum {
+  CBZ_UNIFORM_TYPE_UINT = 0, // uint32_t
+  CBZ_UNIFORM_TYPE_VEC4,     // float[4]
+  CBZ_UNIFORM_TYPE_MAT4,     // float[16]
+} CBZUniformType;
+
+typedef enum {
+  CBZ_TARGET_TYPE_NONE,
+  CBZ_TARGET_TYPE_GRAPHICS,
+  CBZ_TARGET_TYPE_COMPUTE,
+} CBZTargetType;
+
+typedef enum {
+  CBZ_BUFFER_0 = 0,
+  CBZ_BUFFER_1 = 1,
+  CBZ_BUFFER_2 = 2,
+
+  CBZ_BUFFER_GLOBAL_TRANSFORM = 3,
+  CBZ_BUFFER_COUNT,
+} CBZBufferSlot;
+
+typedef enum {
+  CBZ_TEXTURE_0 = 4,
+  CBZ_TEXTURE_1 = 6,
+  CBZ_TEXTURE_2 = 8,
+  CBZ_TEXTURE_3 = 10,
+} CBZTextureSlot;
+
+typedef enum {
+  CBZ_NETWORK_NONE = 0,
+  CBZ_NETWORK_HOST,
+  CBZ_NETWORK_CLIENT,
+} CBZNetworkStatus;
+
+namespace cbz {
 // Minimum renderer limits
 constexpr uint32_t MAX_TARGETS = 128;
 static_assert(MAX_TARGETS <= std::numeric_limits<uint32_t>::max(),
@@ -28,88 +321,51 @@ constexpr uint32_t MAX_COMMAND_BINDINGS = 16;
 static_assert(MAX_COMMAND_BINDINGS <= std::numeric_limits<uint32_t>::max(),
               "MAX_COMMAND_BINDINGS must fit in a uint32_t");
 
-// @ note one to one mapping with 'WGPUVertexFormat'
-enum class VertexFormat : uint32_t {
-  eUndefined = 0x00000000,
-  eUint8x2 = 0x00000001,
-  eUint8x4 = 0x00000002,
-  eSint8x2 = 0x00000003,
-  eSint8x4 = 0x00000004,
-  eUnorm8x2 = 0x00000005,
-  eUnorm8x4 = 0x00000006,
-  eSnorm8x2 = 0x00000007,
-  eSnorm8x4 = 0x00000008,
-  eUint16x2 = 0x00000009,
-  eUint16x4 = 0x0000000A,
-  eSint16x2 = 0x0000000B,
-  eSint16x4 = 0x0000000C,
-  eUnorm16x2 = 0x0000000D,
-  eUnorm16x4 = 0x0000000E,
-  eSnorm16x2 = 0x0000000F,
-  eSnorm16x4 = 0x00000010,
-  eFloat16x2 = 0x00000011,
-  eFloat16x4 = 0x00000012,
-  eFloat32 = 0x00000013,
-  eFloat32x2 = 0x00000014,
-  eFloat32x3 = 0x00000015,
-  eFloat32x4 = 0x00000016,
-  eUint32 = 0x00000017,
-  eUint32x2 = 0x00000018,
-  eUint32x3 = 0x00000019,
-  eUint32x4 = 0x0000001A,
-  eSint32 = 0x0000001B,
-  eSint32x2 = 0x0000001C,
-  eSint32x3 = 0x0000001D,
-  eSint32x4 = 0x0000001E,
-
-  eCount,
-};
-
-[[nodiscard]] constexpr uint32_t VertexFormatGetSize(VertexFormat format) {
+[[nodiscard]] constexpr uint32_t VertexFormatGetSize(CBZVertexFormat format) {
   switch (format) {
   // 2 bytes
-  case VertexFormat::eUint8x2:
-  case VertexFormat::eSint8x2:
-  case VertexFormat::eUnorm8x2:
-  case VertexFormat::eSnorm8x2:
+  case CBZ_VERTEX_FORMAT_UINT8X2:
+  case CBZ_VERTEX_FORMAT_SINT8X2:
+  case CBZ_VERTEX_FORMAT_UNORM8X2:
+  case CBZ_VERTEX_FORMAT_SNORM8X2:
     return 2;
 
   // 4 bytes
-  case VertexFormat::eUint8x4:
-  case VertexFormat::eSint8x4:
-  case VertexFormat::eUnorm8x4:
-  case VertexFormat::eSnorm8x4:
-  case VertexFormat::eUint16x2:
-  case VertexFormat::eSint16x2:
-  case VertexFormat::eUnorm16x2:
-  case VertexFormat::eSnorm16x2:
-  case VertexFormat::eFloat16x2:
-  case VertexFormat::eFloat32:
-  case VertexFormat::eUint32:
-  case VertexFormat::eSint32:
+  case CBZ_VERTEX_FORMAT_UINT8X4:
+  case CBZ_VERTEX_FORMAT_SINT8X4:
+  case CBZ_VERTEX_FORMAT_UNORM8X4:
+  case CBZ_VERTEX_FORMAT_SNORM8X4:
+  case CBZ_VERTEX_FORMAT_UINT16X2:
+  case CBZ_VERTEX_FORMAT_SINT16X2:
+  case CBZ_VERTEX_FORMAT_UNORM16X2:
+  case CBZ_VERTEX_FORMAT_SNORM16X2:
+  case CBZ_VERTEX_FORMAT_FLOAT16X2:
+  case CBZ_VERTEX_FORMAT_FLOAT32:
+  case CBZ_VERTEX_FORMAT_UINT32:
+  case CBZ_VERTEX_FORMAT_SINT32:
     return 4;
 
   // 8 bytes
-  case VertexFormat::eUint16x4:
-  case VertexFormat::eSint16x4:
-  case VertexFormat::eUnorm16x4:
-  case VertexFormat::eSnorm16x4:
-  case VertexFormat::eFloat16x4:
-  case VertexFormat::eFloat32x2:
-  case VertexFormat::eUint32x2:
-  case VertexFormat::eSint32x2:
+  case CBZ_VERTEX_FORMAT_UINT16X4:
+  case CBZ_VERTEX_FORMAT_SINT16X4:
+  case CBZ_VERTEX_FORMAT_UNORM16X4:
+  case CBZ_VERTEX_FORMAT_SNORM16X4:
+  case CBZ_VERTEX_FORMAT_FLOAT16X4:
+  case CBZ_VERTEX_FORMAT_FLOAT32X2:
+  case CBZ_VERTEX_FORMAT_UINT32X2:
+  case CBZ_VERTEX_FORMAT_SINT32X2:
     return 8;
 
   // 12 bytes
-  case VertexFormat::eFloat32x3:
-  case VertexFormat::eUint32x3:
-  case VertexFormat::eSint32x3:
+  case CBZ_VERTEX_FORMAT_FLOAT32X3:
+  case CBZ_VERTEX_FORMAT_UINT32X3:
+  case CBZ_VERTEX_FORMAT_SINT32X3:
     return 12;
 
   // 16 bytes
-  case VertexFormat::eFloat32x4:
-  case VertexFormat::eUint32x4:
-  case VertexFormat::eSint32x4:
+  case CBZ_VERTEX_FORMAT_FLOAT32X4:
+  case CBZ_VERTEX_FORMAT_UINT32X4:
+  case CBZ_VERTEX_FORMAT_SINT32X4:
     return 16;
 
   default:
@@ -117,326 +373,134 @@ enum class VertexFormat : uint32_t {
   }
 }
 
-// @ note one to one mapping with 'WGPUIndexFormat'
-enum class IndexFormat : uint32_t {
-  eUndefined = 0x00000000,
-  eUint16 = 0x00000001,
-  eUint32 = 0x00000002,
-};
-
-// @note one to one mapping with 'WGPUVertexStepMode'
-enum class VertexStepMode : uint32_t {
-  eVertex = 0x00000000,
-  eInstance = 0x00000001,
-  eVertexBufferNotUsed = 0x00000002,
-};
-
-// TODO: Removable
-enum class VertexAttributeType : uint32_t {
-  ePosition = 0,
-  eNormal,
-  eTexCoord0,
-  eColor,
-  eTangent,
-  eJoints,
-  eWeights,
-
-  eCustom,
-  eCount,
-};
-
-// @note one to one mapping with 'WGPUTextureFormat'
-enum class TextureFormat : uint32_t {
-  eUndefined = 0x00000000,
-  eR8Unorm = 0x00000001,
-  eR8Snorm = 0x00000002,
-  eR8Uint = 0x00000003,
-  eR8Sint = 0x00000004,
-  eR16Uint = 0x00000005,
-  eR16Sint = 0x00000006,
-  eR16Float = 0x00000007,
-  eRG8Unorm = 0x00000008,
-  eRG8Snorm = 0x00000009,
-  eRG8Uint = 0x0000000A,
-  eRG8Sint = 0x0000000B,
-  eR32Float = 0x0000000C,
-  eR32Uint = 0x0000000D,
-  eR32Sint = 0x0000000E,
-  eRG16Uint = 0x0000000F,
-  eRG16Sint = 0x00000010,
-  eRG16Float = 0x00000011,
-  eRGBA8Unorm = 0x00000012,
-  eRGBA8UnormSrgb = 0x00000013,
-  eRGBA8Snorm = 0x00000014,
-  eRGBA8Uint = 0x00000015,
-  eRGBA8Sint = 0x00000016,
-  eBGRA8Unorm = 0x00000017,
-  eBGRA8UnormSrgb = 0x00000018,
-  eRGB10A2Uint = 0x00000019,
-  eRGB10A2Unorm = 0x0000001A,
-  eRG11B10Ufloat = 0x0000001B,
-  eRGB9E5Ufloat = 0x0000001C,
-  eRG32Float = 0x0000001D,
-  eRG32Uint = 0x0000001E,
-  eRG32Sint = 0x0000001F,
-  eRGBA16Uint = 0x00000020,
-  eRGBA16Sint = 0x00000021,
-  eRGBA16Float = 0x00000022,
-  eRGBA32Float = 0x00000023,
-  eRGBA32Uint = 0x00000024,
-  eRGBA32Sint = 0x00000025,
-  eStencil8 = 0x00000026,
-  eDepth16Unorm = 0x00000027,
-  eDepth24Plus = 0x00000028,
-  eDepth24PlusStencil8 = 0x00000029,
-  eDepth32Float = 0x0000002A,
-  eDepth32FloatStencil8 = 0x0000002B,
-  eBC1RGBAUnorm = 0x0000002C,
-  eBC1RGBAUnormSrgb = 0x0000002D,
-  eBC2RGBAUnorm = 0x0000002E,
-  eBC2RGBAUnormSrgb = 0x0000002F,
-  eBC3RGBAUnorm = 0x00000030,
-  eBC3RGBAUnormSrgb = 0x00000031,
-  eBC4RUnorm = 0x00000032,
-  eBC4RSnorm = 0x00000033,
-  eBC5RGUnorm = 0x00000034,
-  eBC5RGSnorm = 0x00000035,
-  eBC6HRGBUfloat = 0x00000036,
-  eBC6HRGBFloat = 0x00000037,
-  eBC7RGBAUnorm = 0x00000038,
-  eBC7RGBAUnormSrgb = 0x00000039,
-  eETC2RGB8Unorm = 0x0000003A,
-  eETC2RGB8UnormSrgb = 0x0000003B,
-  eETC2RGB8A1Unorm = 0x0000003C,
-  eETC2RGB8A1UnormSrgb = 0x0000003D,
-  eETC2RGBA8Unorm = 0x0000003E,
-  eETC2RGBA8UnormSrgb = 0x0000003F,
-  eEACR11Unorm = 0x00000040,
-  eEACR11Snorm = 0x00000041,
-  eEACRG11Unorm = 0x00000042,
-  eEACRG11Snorm = 0x00000043,
-  eASTC4x4Unorm = 0x00000044,
-  eASTC4x4UnormSrgb = 0x00000045,
-  eASTC5x4Unorm = 0x00000046,
-  eASTC5x4UnormSrgb = 0x00000047,
-  eASTC5x5Unorm = 0x00000048,
-  eASTC5x5UnormSrgb = 0x00000049,
-  eASTC6x5Unorm = 0x0000004A,
-  eASTC6x5UnormSrgb = 0x0000004B,
-  eASTC6x6Unorm = 0x0000004C,
-  eASTC6x6UnormSrgb = 0x0000004D,
-  eASTC8x5Unorm = 0x0000004E,
-  eASTC8x5UnormSrgb = 0x0000004F,
-  eASTC8x6Unorm = 0x00000050,
-  eASTC8x6UnormSrgb = 0x00000051,
-  eASTC8x8Unorm = 0x00000052,
-  eASTC8x8UnormSrgb = 0x00000053,
-  eASTC10x5Unorm = 0x00000054,
-  eASTC10x5UnormSrgb = 0x00000055,
-  eASTC10x6Unorm = 0x00000056,
-  eASTC10x6UnormSrgb = 0x00000057,
-  eASTC10x8Unorm = 0x00000058,
-  eASTC10x8UnormSrgb = 0x00000059,
-  eASTC10x10Unorm = 0x0000005A,
-  eASTC10x10UnormSrgb = 0x0000005B,
-  eASTC12x10Unorm = 0x0000005C,
-  eASTC12x10UnormSrgb = 0x0000005D,
-  eASTC12x12Unorm = 0x0000005E,
-  eASTC12x12UnormSrgb = 0x0000005F,
-};
-
-// @note one to one mapping with 'WGPUAddressMode'
-enum class AddressMode : uint32_t {
-  eRepeat = 0x00000000,
-  eMirrorRepeat = 0x00000001,
-  eClampToEdge = 0x00000002,
-
-  eCount,
-};
-
-// @note one to one mapping with 'WGPUFilterMode'
-enum class FilterMode : uint32_t {
-  eNearest = 0x00000000,
-  eLinear = 0x00000001,
-
-  eCount,
-};
-
 CBZ_API struct TextureBindingDesc {
-  FilterMode filterMode;
-  AddressMode addressMode;
+  CBZFilterMode filterMode;
+  CBZAddressMode addressMode;
 };
 
-[[nodiscard]] constexpr uint32_t TextureFormatGetSize(TextureFormat format) {
+CBZ_NO_DISCARD constexpr uint32_t
+TextureFormatGetSize(CBZTextureFormat format) {
   switch (format) {
   // 1 channel 8-bit
-  case TextureFormat::eR8Unorm:
-  case TextureFormat::eR8Snorm:
-  case TextureFormat::eR8Uint:
-  case TextureFormat::eR8Sint:
+  case CBZ_TEXTURE_FORMAT_R8UNORM:
+  case CBZ_TEXTURE_FORMAT_R8SNORM:
+  case CBZ_TEXTURE_FORMAT_R8UINT:
+  case CBZ_TEXTURE_FORMAT_R8SINT:
     return 1;
 
   // 1 channel 16-bit
-  case TextureFormat::eR16Uint:
-  case TextureFormat::eR16Sint:
-  case TextureFormat::eR16Float:
+  case CBZ_TEXTURE_FORMAT_R16UINT:
+  case CBZ_TEXTURE_FORMAT_R16SINT:
+  case CBZ_TEXTURE_FORMAT_R16FLOAT:
     return 2;
 
-  // 2 channels 8-bit
-  case TextureFormat::eRG8Unorm:
-  case TextureFormat::eRG8Snorm:
-  case TextureFormat::eRG8Uint:
-  case TextureFormat::eRG8Sint:
+  // 2 CHANNELS 8-BIT
+  case CBZ_TEXTURE_FORMAT_RG8UNORM:
+  case CBZ_TEXTURE_FORMAT_RG8SNORM:
+  case CBZ_TEXTURE_FORMAT_RG8UINT:
+  case CBZ_TEXTURE_FORMAT_RG8SINT:
     return 2;
 
-  // 1 channel 32-bit
-  case TextureFormat::eR32Float:
-  case TextureFormat::eR32Uint:
-  case TextureFormat::eR32Sint:
+  // 1 CHANNEL 32-BIT
+  case CBZ_TEXTURE_FORMAT_R32FLOAT:
+  case CBZ_TEXTURE_FORMAT_R32UINT:
+  case CBZ_TEXTURE_FORMAT_R32SINT:
     return 4;
 
-  // 2 channels 16-bit
-  case TextureFormat::eRG16Uint:
-  case TextureFormat::eRG16Sint:
-  case TextureFormat::eRG16Float:
+  // 2 CHANNELS 16-BIT
+  case CBZ_TEXTURE_FORMAT_RG16UINT:
+  case CBZ_TEXTURE_FORMAT_RG16SINT:
+  case CBZ_TEXTURE_FORMAT_RG16FLOAT:
     return 4;
 
-  // 4 channels 8-bit
-  case TextureFormat::eRGBA8Unorm:
-  case TextureFormat::eRGBA8UnormSrgb:
-  case TextureFormat::eRGBA8Snorm:
-  case TextureFormat::eRGBA8Uint:
-  case TextureFormat::eRGBA8Sint:
-  case TextureFormat::eBGRA8Unorm:
-  case TextureFormat::eBGRA8UnormSrgb:
+  // 4 CHANNELS 8-BIT
+  case CBZ_TEXTURE_FORMAT_RGBA8UNORM:
+  case CBZ_TEXTURE_FORMAT_RGBA8UNORMSRGB:
+  case CBZ_TEXTURE_FORMAT_RGBA8SNORM:
+  case CBZ_TEXTURE_FORMAT_RGBA8UINT:
+  case CBZ_TEXTURE_FORMAT_RGBA8SINT:
+  case CBZ_TEXTURE_FORMAT_BGRA8UNORM:
+  case CBZ_TEXTURE_FORMAT_BGRA8UNORMSRGB:
     return 4;
 
-  // Packed formats
-  case TextureFormat::eRGB10A2Uint:
-  case TextureFormat::eRGB10A2Unorm:
-  case TextureFormat::eRG11B10Ufloat:
-  case TextureFormat::eRGB9E5Ufloat:
+  // PACKED FORMATS
+  case CBZ_TEXTURE_FORMAT_RGB10A2UINT:
+  case CBZ_TEXTURE_FORMAT_RGB10A2UNORM:
+  case CBZ_TEXTURE_FORMAT_RG11B10UFLOAT:
+  case CBZ_TEXTURE_FORMAT_RGB9E5UFLOAT:
     return 4;
 
-  // 2 channels 32-bit
-  case TextureFormat::eRG32Float:
-  case TextureFormat::eRG32Uint:
-  case TextureFormat::eRG32Sint:
+  // 2 CHANNELS 32-BIT
+  case CBZ_TEXTURE_FORMAT_RG32FLOAT:
+  case CBZ_TEXTURE_FORMAT_RG32UINT:
+  case CBZ_TEXTURE_FORMAT_RG32SINT:
     return 8;
 
-  // 4 channels 16-bit
-  case TextureFormat::eRGBA16Uint:
-  case TextureFormat::eRGBA16Sint:
-  case TextureFormat::eRGBA16Float:
+  // 4 CHANNELS 16-BIT
+  case CBZ_TEXTURE_FORMAT_RGBA16UINT:
+  case CBZ_TEXTURE_FORMAT_RGBA16SINT:
+  case CBZ_TEXTURE_FORMAT_RGBA16FLOAT:
     return 8;
 
-  // 4 channels 32-bit
-  case TextureFormat::eRGBA32Float:
-  case TextureFormat::eRGBA32Uint:
-  case TextureFormat::eRGBA32Sint:
+  // 4 CHANNELS 32-BIT
+  case CBZ_TEXTURE_FORMAT_RGBA32FLOAT:
+  case CBZ_TEXTURE_FORMAT_RGBA32UINT:
+  case CBZ_TEXTURE_FORMAT_RGBA32SINT:
     return 16;
 
-  // Depth/Stencil
-  case TextureFormat::eStencil8:
+  // DEPTH/STENCIL
+  case CBZ_TEXTURE_FORMAT_STENCIL8:
     return 1;
-  case TextureFormat::eDepth16Unorm:
+  case CBZ_TEXTURE_FORMAT_DEPTH16UNORM:
     return 2;
-  case TextureFormat::eDepth24Plus:
-  case TextureFormat::eDepth24PlusStencil8:
-    return 4; // Approximation
-  case TextureFormat::eDepth32Float:
+  case CBZ_TEXTURE_FORMAT_DEPTH24PLUS:
+  case CBZ_TEXTURE_FORMAT_DEPTH24PLUSSTENCIL8:
+    return 4; // APPROXIMATION
+  case CBZ_TEXTURE_FORMAT_DEPTH32FLOAT:
     return 4;
-  case TextureFormat::eDepth32FloatStencil8:
+  case CBZ_TEXTURE_FORMAT_DEPTH32FLOATSTENCIL8:
     return 5;
 
-  // Block compressed formats (size per 4x4 block)
-  case TextureFormat::eBC1RGBAUnorm:
-  case TextureFormat::eBC1RGBAUnormSrgb:
-  case TextureFormat::eBC4RUnorm:
-  case TextureFormat::eBC4RSnorm:
+  // BLOCK COMPRESSED FORMATS (SIZE PER 4X4 BLOCK)
+  case CBZ_TEXTURE_FORMAT_BC1RGBAUNORM:
+  case CBZ_TEXTURE_FORMAT_BC1RGBAUNORMSRGB:
+  case CBZ_TEXTURE_FORMAT_BC4RUNORM:
+  case CBZ_TEXTURE_FORMAT_BC4RSNORM:
     return 8;
-  case TextureFormat::eBC2RGBAUnorm:
-  case TextureFormat::eBC2RGBAUnormSrgb:
-  case TextureFormat::eBC3RGBAUnorm:
-  case TextureFormat::eBC3RGBAUnormSrgb:
-  case TextureFormat::eBC5RGUnorm:
-  case TextureFormat::eBC5RGSnorm:
-  case TextureFormat::eBC6HRGBUfloat:
-  case TextureFormat::eBC6HRGBFloat:
-  case TextureFormat::eBC7RGBAUnorm:
-  case TextureFormat::eBC7RGBAUnormSrgb:
+  case CBZ_TEXTURE_FORMAT_BC2RGBAUNORM:
+  case CBZ_TEXTURE_FORMAT_BC2RGBAUNORMSRGB:
+  case CBZ_TEXTURE_FORMAT_BC3RGBAUNORM:
+  case CBZ_TEXTURE_FORMAT_BC3RGBAUNORMSRGB:
+  case CBZ_TEXTURE_FORMAT_BC5RGUNORM:
+  case CBZ_TEXTURE_FORMAT_BC5RGSNORM:
+  case CBZ_TEXTURE_FORMAT_BC6HRGBUFLOAT:
+  case CBZ_TEXTURE_FORMAT_BC6HRGBFLOAT:
+  case CBZ_TEXTURE_FORMAT_BC7RGBAUNORM:
+  case CBZ_TEXTURE_FORMAT_BC7RGBAUNORMSRGB:
     return 16;
 
   default:
-    return 0; // Unknown or undefined
-  }
-}
-
-// @note one to one mapping with 'WGPUTextureDimension'
-enum class TextureDimension : uint32_t {
-  e1D = 0x00000000,
-  e2D = 0x00000001,
-  e3D = 0x00000002,
-};
-
-enum class UniformType : uint32_t {
-  eUINT, // uint32_t
-  eVec4, // float[4]
-  eMat4, // float[16]
-};
-
-enum class TargetType : uint32_t {
-  eNone,
-  eGraphics,
-  eCompute,
-};
-
-enum class BufferSlot : uint8_t {
-  e0 = 0,
-  e1 = 1,
-  e2 = 2,
-  e3 = 3,
-
-  eCount = 4,
-};
-
-enum class TextureSlot : uint8_t {
-  e0 = 4,
-  e1 = 6,
-  e2 = 8,
-  e3 = 10,
-};
-
-[[nodiscard]] constexpr uint32_t UniformTypeGetSize(UniformType type) {
-  switch (type) {
-  case UniformType::eUINT:
-    return sizeof(uint32_t);
-  case UniformType::eVec4:
-    return sizeof(float) * 4;
-  case UniformType::eMat4:
-    return sizeof(float) * 16;
-  default:
-    return 0;
+    return 0; // UNKNOWN OR UNDEFINED
   }
 }
 
 struct VertexAttribute {
-  VertexFormat format;
+  CBZVertexFormat format;
   uint64_t offset;
   uint32_t shaderLocation;
 };
 
 class VertexLayout {
 public:
-  void begin(VertexStepMode mode);
-  void push_attribute(VertexAttributeType type, VertexFormat format);
+  void begin(CBZVertexStepMode mode);
+  void push_attribute(CBZVertexAttributeType type, CBZVertexFormat format);
   void end();
 
   bool operator==(const VertexLayout &other) const;
   bool operator!=(const VertexLayout &other) const;
 
   std::vector<VertexAttribute> attributes;
-  VertexStepMode stepMode;
+  CBZVertexStepMode stepMode;
   uint32_t stride;
 };
 

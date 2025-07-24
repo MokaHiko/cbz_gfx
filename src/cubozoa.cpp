@@ -1,17 +1,21 @@
 #include "cubozoa/cubozoa.h"
+#include <cbz_pch.h>
 
+#include "cubozoa/cubozoa_defines.h"
 #include "renderer/cubozoa_irenderer_context.h"
+
+#include "cubozoa/net/cubozoa_net.h"
 
 #include <GLFW/glfw3.h>
 #include <murmurhash/MurmurHash3.h>
 
 namespace cbz {
 
-// Application
+// --- Application ---
 static GLFWwindow *sWindow;
 static std::shared_ptr<spdlog::logger> sLogger;
 
-// Input
+// --- Input ---
 static std::array<bool, static_cast<uint32_t>(Key::eCount)> sKeyMap;
 static void InputKeyCallback(GLFWwindow *, int key, int, int action, int) {
   if (key == GLFW_KEY_UNKNOWN)
@@ -26,15 +30,15 @@ static void InputKeyCallback(GLFWwindow *, int key, int, int action, int) {
 
 void InputInit() { glfwSetKeyCallback(sWindow, InputKeyCallback); }
 
-bool IsKeyDown(Key key) {
+CBZBool32 IsKeyDown(Key key) {
   if (static_cast<uint32_t>(key) >= static_cast<uint32_t>(Key::eCount)) {
     return false;
   }
 
-  return sKeyMap[static_cast<uint32_t>(key)];
+  return static_cast<CBZBool32>(sKeyMap[static_cast<uint32_t>(key)]);
 }
 
-// Renderer
+// --- Renderer ---
 struct TransformData {
   float transform[16];
   float view[16];
@@ -42,6 +46,7 @@ struct TransformData {
 
   float inverseTransform[16];
   float inverseView[16];
+  float inverseProj[16];
 };
 
 static std::vector<ShaderProgramCommand> sShaderProgramCmds;
@@ -59,17 +64,17 @@ Result Init(InitDesc initDesc) {
   sLogger->set_level(spdlog::level::trace);
   sLogger->set_pattern("[%^%l%$][CBZ] %v");
 
-  // switch (initDesc.netStatus) {
-  // case NetworkStatus::eClient:
-  //   result = net::initClient();
-  //   break;
-  // case NetworkStatus::eHost:
-  //   result = net::initServer();
-  //   break;
-  // case NetworkStatus::eNone:
-  //   result = Result::eNetworkFailure;
-  //   break;
-  // }
+  switch (initDesc.netStatus) {
+  case CBZNetworkStatus::CBZ_NETWORK_CLIENT:
+    result = net::initClient();
+    break;
+  case CBZNetworkStatus::CBZ_NETWORK_HOST:
+    result = net::initServer();
+    break;
+  case CBZNetworkStatus::CBZ_NETWORK_NONE:
+    result = Result::eNetworkFailure;
+    break;
+  }
 
   // if (result != Result::eSuccess) {
   //   return result;
@@ -108,11 +113,11 @@ Result Init(InitDesc initDesc) {
   sTransforms.fill(data);
 
   sTransformSBH = StructuredBufferCreate(
-      UniformType::eMat4,
+      CBZ_UNIFORM_TYPE_MAT4,
       MAX_COMMAND_SUBMISSIONS * (sizeof(TransformData) / (sizeof(float) * 16)),
       sTransforms.data());
 
-  sShaderProgramCmds.resize(2);
+  sShaderProgramCmds.resize(MAX_COMMAND_SUBMISSIONS);
   sNextShaderProgramCmdIdx = 0;
 
   return result;
@@ -120,7 +125,7 @@ Result Init(InitDesc initDesc) {
 
 VertexBufferHandle VertexBufferCreate(const VertexLayout &vertexLayout,
                                       uint32_t vertexCount, const void *data,
-                                      const std::string &name) {
+                                      const char *name) {
   VertexBufferHandle vbh = HandleProvider<VertexBufferHandle>::write(name);
 
   if (sRenderer->vertexBufferCreate(vbh, vertexLayout, vertexCount, data) !=
@@ -144,7 +149,7 @@ void VertexBufferDestroy(VertexBufferHandle vbh) {
 }
 
 IndexBufferHandle IndexBufferCreate(IndexFormat format, uint32_t count,
-                                    const void *data, const std::string &name) {
+                                    const void *data, const char *name) {
   IndexBufferHandle ibh = HandleProvider<IndexBufferHandle>::write(name);
 
   if (sRenderer->indexBufferCreate(ibh, format, count, data) !=
@@ -167,10 +172,10 @@ void IndexBufferDestroy(IndexBufferHandle ibh) {
   }
 }
 
-StructuredBufferHandle StructuredBufferCreate(UniformType type,
+StructuredBufferHandle StructuredBufferCreate(CBZUniformType type,
                                               uint32_t elementCount,
                                               const void *elementData,
-                                              const std::string &name) {
+                                              const char *name) {
   StructuredBufferHandle sbh =
       HandleProvider<StructuredBufferHandle>::write(name);
 
@@ -189,8 +194,8 @@ void StructuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,
   sRenderer->structuredBufferUpdate(sbh, elementCount, data, offset);
 }
 
-void StructuredBufferSet(BufferSlot slot, StructuredBufferHandle sbh,
-                         bool dynamic) {
+void StructuredBufferSet(CBZBufferSlot slot, StructuredBufferHandle sbh,
+                         CBZBool32 dynamic) {
   Binding binding = {};
 
   binding.type = dynamic ? BindingType::eRWStructuredBuffer
@@ -209,13 +214,13 @@ void StructuredBufferDestroy(StructuredBufferHandle sbh) {
   }
 }
 
-UniformHandle UniformCreate(const std::string &name, UniformType type,
+UniformHandle UniformCreate(const char *name, CBZUniformType type,
                             uint16_t elementCount) {
   UniformHandle uh = HandleProvider<UniformHandle>::write(name);
 
   switch (type) {
-  case UniformType::eVec4:
-  case UniformType::eMat4: {
+  case CBZ_UNIFORM_TYPE_VEC4:
+  case CBZ_UNIFORM_TYPE_MAT4: {
     if (sRenderer->uniformBufferCreate(uh, type, elementCount) !=
         Result::eSuccess) {
       HandleProvider<UniformHandle>::free(uh);
@@ -254,12 +259,12 @@ void UniformDestroy(UniformHandle uh) {
   HandleProvider<UniformHandle>::free(uh);
 }
 
-TextureHandle Texture2DCreate(TextureFormat format, uint32_t w, uint32_t h,
-                              const std::string &name) {
+TextureHandle Texture2DCreate(CBZTextureFormat format, uint32_t w, uint32_t h,
+                              const char *name) {
   TextureHandle uh = HandleProvider<TextureHandle>::write(name);
 
   // Prefer uniform buffer
-  if (sRenderer->textureCreate(uh, format, w, h, 1, TextureDimension::e2D) !=
+  if (sRenderer->textureCreate(uh, format, w, h, 1, CBZ_TEXTURE_DIMENSION_2D) !=
       Result::eSuccess) {
     HandleProvider<TextureHandle>::free(uh);
     return {CBZ_INVALID_HANDLE};
@@ -272,7 +277,7 @@ void Texture2DUpdate(TextureHandle th, void *data, uint32_t count) {
   sRenderer->textureUpdate(th, data, count);
 }
 
-static void SamplerBind(TextureSlot textureSlot, TextureBindingDesc desc) {
+static void SamplerBind(CBZTextureSlot textureSlot, TextureBindingDesc desc) {
   Binding binding = {};
   binding.type = BindingType::eSampler;
   binding.value.sampler.slot = static_cast<uint8_t>(textureSlot) + 1;
@@ -281,14 +286,15 @@ static void SamplerBind(TextureSlot textureSlot, TextureBindingDesc desc) {
   sShaderProgramCmds[sNextShaderProgramCmdIdx].bindings.push_back(binding);
 }
 
-void TextureSet(TextureSlot slot, TextureHandle th, TextureBindingDesc desc) {
+void TextureSet(CBZTextureSlot slot, TextureHandle th,
+                TextureBindingDesc desc) {
   Binding binding = {};
   binding.type = BindingType::eTexture2D;
   binding.value.texture.slot = static_cast<uint8_t>(slot);
   binding.value.texture.handle = th;
   sShaderProgramCmds[sNextShaderProgramCmdIdx].bindings.push_back(binding);
 
-  if (desc.addressMode != AddressMode::eCount) {
+  if (desc.addressMode != CBZ_ADDRESS_MODE_COUNT) {
     SamplerBind(slot, desc);
   }
 }
@@ -303,16 +309,26 @@ void TextureDestroy(TextureHandle th) {
   HandleProvider<TextureHandle>::free(th);
 }
 
-ShaderHandle ShaderCreate(const std::string &path, const std::string &name) {
-  ShaderHandle sh = HandleProvider<ShaderHandle>::write(name);
+ShaderHandle ShaderCreate(const char *path, int flags) {
+  ShaderHandle sh = HandleProvider<ShaderHandle>::write();
 
-  if (sRenderer->shaderCreate(sh, path) != Result::eSuccess) {
+  if (sRenderer->shaderCreate(sh, static_cast<CBZShaderFlags>(flags), path) !=
+      Result::eSuccess) {
     sLogger->error("Failed to create shader module!");
     HandleProvider<ShaderHandle>::free(sh);
     return {CBZ_INVALID_HANDLE};
   }
 
   return sh;
+}
+
+void ShaderSetName(ShaderHandle sh, const char *name, uint32_t len) {
+  if (!HandleProvider<ShaderHandle>::isValid(sh)) {
+    sLogger->error("Attempting to name invalid shader handle!");
+    return;
+  }
+
+  HandleProvider<ShaderHandle>::setName(sh, std::string(name, len));
 }
 
 void ShaderDestroy(ShaderHandle sh) {
@@ -322,10 +338,8 @@ void ShaderDestroy(ShaderHandle sh) {
   }
 }
 
-GraphicsProgramHandle GraphicsProgramCreate(ShaderHandle sh,
-                                            const std::string &name) {
-  GraphicsProgramHandle gph =
-      HandleProvider<GraphicsProgramHandle>::write(name);
+GraphicsProgramHandle GraphicsProgramCreate(ShaderHandle sh, int _) {
+  GraphicsProgramHandle gph = HandleProvider<GraphicsProgramHandle>::write();
 
   if (sRenderer->graphicsProgramCreate(gph, sh) != Result::eSuccess) {
     HandleProvider<GraphicsProgramHandle>::free(gph);
@@ -333,6 +347,16 @@ GraphicsProgramHandle GraphicsProgramCreate(ShaderHandle sh,
   }
 
   return gph;
+}
+
+void GraphicsProgramSetName(GraphicsProgramHandle gph, const char *name,
+                            uint32_t len) {
+  if (!HandleProvider<GraphicsProgramHandle>::isValid(gph)) {
+    sLogger->error("Attempting to name invalid graphics program handle!");
+    return;
+  }
+
+  HandleProvider<GraphicsProgramHandle>::setName(gph, std::string(name, len));
 }
 
 void GraphicsProgramDestroy(GraphicsProgramHandle gph) {
@@ -345,8 +369,7 @@ void GraphicsProgramDestroy(GraphicsProgramHandle gph) {
   HandleProvider<GraphicsProgramHandle>::free(gph);
 }
 
-ComputeProgramHandle ComputeProgramCreate(ShaderHandle sh,
-                                          const std::string &name) {
+ComputeProgramHandle ComputeProgramCreate(ShaderHandle sh, const char *name) {
   ComputeProgramHandle cph = HandleProvider<ComputeProgramHandle>::write(name);
 
   if (sRenderer->computeProgramCreate(cph, sh) != Result::eSuccess) {
@@ -376,7 +399,7 @@ void Submit(uint8_t target, GraphicsProgramHandle gph) {
     return;
   }
 
-  StructuredBufferSet(BufferSlot::e0, sTransformSBH);
+  StructuredBufferSet(CBZ_BUFFER_GLOBAL_TRANSFORM, sTransformSBH);
 
   if (sNextShaderProgramCmdIdx >= MAX_COMMAND_BINDINGS) {
     sLogger->error("Draw called exceeding max uniform binds {}",
@@ -386,7 +409,7 @@ void Submit(uint8_t target, GraphicsProgramHandle gph) {
 
   ShaderProgramCommand *currentCommand =
       &sShaderProgramCmds[sNextShaderProgramCmdIdx];
-  currentCommand->programType = TargetType::eGraphics;
+  currentCommand->programType = CBZ_TARGET_TYPE_GRAPHICS;
 
   uint32_t uniformHash;
   MurmurHash3_x86_32(currentCommand->bindings.data(),
@@ -421,7 +444,7 @@ void Submit(uint8_t target, ComputeProgramHandle cph, uint32_t x, uint32_t y,
 
   ShaderProgramCommand *currentCommand =
       &sShaderProgramCmds[sNextShaderProgramCmdIdx];
-  currentCommand->programType = TargetType::eCompute;
+  currentCommand->programType = CBZ_TARGET_TYPE_COMPUTE;
 
   uint32_t uniformHash;
   MurmurHash3_x86_32(currentCommand->bindings.data(),
@@ -443,11 +466,14 @@ void Submit(uint8_t target, ComputeProgramHandle cph, uint32_t x, uint32_t y,
   sNextShaderProgramCmdIdx++;
 }
 
-bool Frame() {
+CBZBool32 Frame() {
   const uint32_t submissionCount = sNextShaderProgramCmdIdx;
 
   if (submissionCount > 0) {
-    StructuredBufferUpdate(sTransformSBH, submissionCount, sTransforms.data());
+    const uint32_t mat4PerTransform =
+        (sizeof(TransformData) / (sizeof(float) * 16));
+    StructuredBufferUpdate(sTransformSBH, submissionCount * mat4PerTransform,
+                           sTransforms.data());
   }
 
   std::sort(sShaderProgramCmds.begin(),
@@ -465,14 +491,14 @@ bool Frame() {
   // Clear submissions
   for (uint32_t i = 0; i < sNextShaderProgramCmdIdx; i++) {
     sShaderProgramCmds[i].bindings.clear();
-    sShaderProgramCmds[i].programType = TargetType::eNone;
+    sShaderProgramCmds[i].programType = CBZ_TARGET_TYPE_NONE;
     sShaderProgramCmds[i].sortKey = std::numeric_limits<uint64_t>::max();
   }
   sNextShaderProgramCmdIdx = 0;
 
   glfwPollEvents();
 
-  return !glfwWindowShouldClose(sWindow);
+  return static_cast<CBZBool32>(!glfwWindowShouldClose(sWindow));
 }
 
 void Shutdown() {
@@ -484,7 +510,7 @@ void Shutdown() {
   glfwTerminate();
 }
 
-void VertexLayout::begin(VertexStepMode mode) {
+void VertexLayout::begin(CBZVertexStepMode mode) {
   if (attributes.size() > 0 || stride != 0) {
     spdlog::warn(
         "VertexLayout::begin() called with non empty attribute array!");
@@ -494,7 +520,8 @@ void VertexLayout::begin(VertexStepMode mode) {
   stride = 0;
 }
 
-void VertexLayout::push_attribute(VertexAttributeType, VertexFormat format) {
+void VertexLayout::push_attribute(CBZVertexAttributeType,
+                                  CBZVertexFormat format) {
   attributes.push_back(
       {format, stride, static_cast<uint32_t>(attributes.size())});
 
@@ -502,6 +529,7 @@ void VertexLayout::push_attribute(VertexAttributeType, VertexFormat format) {
 }
 
 void VertexLayout::end() {
+  // TODO: Check if layout is valid
   // for (VertexAttribute & attrib : attributes) { }
 }
 

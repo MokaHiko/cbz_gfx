@@ -184,8 +184,8 @@ RWStructuredBuffer<cbz::Vec4> imageBuffer;
 // Add Uniforms
 static const float3 VOXEL_SIZE = (0.25);
 static const float EPSILON = VOXEL_SIZE.x + 0.1;
-static const uint32_t MAX_STEPS = 500;
-static const uint32_t MAX_BOUNCES = 30;
+static const uint32_t MAX_STEPS = 200;
+static const uint32_t MAX_BOUNCES = 6;
 static float2 k = float2(1, -1);
 static float h = 0.0001; // replace by an appropriate value
 struct RaytracingSettings

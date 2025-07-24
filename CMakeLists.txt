@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.0...3.25)
 project(cubozoa VERSION 0.1.0 LANGUAGES CXX C)
 
+option(CBZ_BUILD_EXAMPLES "Build examples" OFF)
+
 include(FetchContent)
 
 FetchContent_Declare(
@@ -29,6 +31,7 @@ else()
     add_library(glfw INTERFACE)
     target_link_options(glfw INTERFACE -sUSE_GLFW=3 -sASYNCIFY -sUSE_WEBGPU -sASSERTIONS -sALLOW_MEMORY_GROWTH)
 endif()
+
 add_subdirectory(third_party/glfw3webgpu)
 add_subdirectory(third_party/imgui)
 add_subdirectory(third_party/glm)
@@ -49,7 +52,8 @@ add_library(${PROJECT_NAME}
 
             src/cubozoa.cpp)
 
-target_link_libraries(${PROJECT_NAME} PUBLIC spdlog glfw glm webgpu glfw3webgpu imgui murmurhash)
+
+target_link_libraries(${PROJECT_NAME} PUBLIC spdlog glm glfw3webgpu imgui murmurhash)
 
 if(EMSCRIPTEN)
     target_compile_definitions(${PROJECT_NAME} PUBLIC WEBGPU_BACKEND_EMSCRIPTEN)
@@ -60,11 +64,12 @@ else()
     )
 
     target_compile_definitions(${PROJECT_NAME} PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC WEBGPU_BACKEND_WGPU)
 endif()
 
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 target_include_directories(${PROJECT_NAME} PUBLIC src)
-target_precompile_headers(${PROJECT_NAME} PUBLIC src/cbz_pch.h)
+target_precompile_headers(${PROJECT_NAME} PRIVATE src/cbz_pch.h)
 set_target_properties(${PROJECT_NAME} PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
@@ -86,4 +91,6 @@ if (XCODE)
     )
 endif()
 
-add_subdirectory(examples)
+if(CBZ_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()

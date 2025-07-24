@@ -1,6 +1,7 @@
 #ifndef CBZ_MEMORY_H_
 #define CBZ_MEMORY_H_
 
+#include <cubozoa/cubozoa_defines.h>
 #include <memory>
 
 namespace cbz {

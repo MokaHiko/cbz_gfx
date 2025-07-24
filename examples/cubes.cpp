@@ -37,23 +37,23 @@ constexpr uint32_t kHeight = 720;
 
 class Cubes {
 public:
-  void init(cbz::NetworkStatus netStatus = cbz::NetworkStatus::eClient) {
+  void init(cbz::NetworkStatus netStatus = cbz::CBZNetworkStatus::CBZ_NETWORK_CLIENT) {
 
     if (cbz::Init({"Cubes", kWidth, kHeight, netStatus}) !=
         cbz::Result::eSuccess) {
       exit(0);
     }
 
-    mLitSH = cbz::ShaderCreate("assets/shaders/gltf_viewer.slang");
+    mLitSH = cbz::ShaderCreate("assets/shaders/gltf_viewer.spirv");
     mLitPH = cbz::GraphicsProgramCreate(mLitSH, "blit_program");
 
     cbz::VertexLayout layout;
-    layout.begin(cbz::VertexStepMode::eVertex);
-    layout.push_attribute(cbz::VertexAttributeType::ePosition,
+    layout.begin(cbz::CBZVertexStepMode::CBZ_VERTEX_STEP_MODE_VERTEX);
+    layout.push_attribute(cbz::CBZVertexAttributeType::CBZ_VERTEX_ATTRIBUTE_POSITION,
                           cbz::VertexFormat::eFloat32x3);
-    layout.push_attribute(cbz::VertexAttributeType::eNormal,
+    layout.push_attribute(cbz::CBZVertexAttributeType::CBZ_VERTEX_ATTRIBUTE_NORMAL,
                           cbz::VertexFormat::eFloat32x3);
-    layout.push_attribute(cbz::VertexAttributeType::eTexCoord0,
+    layout.push_attribute(cbz::CBZVertexAttributeType::CBZ_VERTEX_ATTRIBUTE_TEXCOORD0,
                           cbz::VertexFormat::eFloat32x2);
     layout.end();
 
@@ -91,7 +91,7 @@ public:
     cbz::UniformSet(mUniformUH, &myUniform);
 
     cbz::TextureSet(cbz::TextureSlot::e0, mAlbedoTH,
-                    {cbz::FilterMode::eLinear, cbz::AddressMode::eClampToEdge});
+                    {cbz::FilterMode::eLinear, cbz::CBZAddressMode::eClampToEdge});
 
     cbz::TextureSet(cbz::TextureSlot::e1, mAlbedoTH,
                     {cbz::FilterMode::eLinear, cbz::AddressMode::eClampToEdge});
@@ -139,9 +139,9 @@ int main(int argc, char **argv) {
   Cubes app = {};
 
   if (argc > 1) {
-    app.init(cbz::NetworkStatus::eHost);
+    app.init(cbz::CBZNetworkStatus::CBZ_NETWORK_HOST);
   } else {
-    app.init(cbz::NetworkStatus::eClient);
+    app.init(cbz::CBZNetworkStatus::CBZ_NETWORK_CLIENT);
   }
 
 #ifndef __EMSCRIPTEN__
