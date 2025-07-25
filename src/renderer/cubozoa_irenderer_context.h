@@ -151,6 +151,7 @@ struct ShaderProgramCommand {
   std::vector<Binding> bindings;
 
   uint64_t sortKey;
+  uint32_t submissionID;
   uint8_t target;
 
   inline uint32_t getDescriptorHash() const { return sortKey & 0xFFFFFFFF; }

@@ -2,9 +2,8 @@
 #include <cbz_pch.h>
 
 #include "cubozoa/cubozoa_defines.h"
-#include "renderer/cubozoa_irenderer_context.h"
-
 #include "cubozoa/net/cubozoa_net.h"
+#include "renderer/cubozoa_irenderer_context.h"
 
 #include <GLFW/glfw3.h>
 #include <murmurhash/MurmurHash3.h>
@@ -338,7 +337,8 @@ void ShaderDestroy(ShaderHandle sh) {
   }
 }
 
-GraphicsProgramHandle GraphicsProgramCreate(ShaderHandle sh, [[maybe_unused]] int _) {
+GraphicsProgramHandle GraphicsProgramCreate(ShaderHandle sh,
+                                            [[maybe_unused]] int _) {
   GraphicsProgramHandle gph = HandleProvider<GraphicsProgramHandle>::write();
 
   if (sRenderer->graphicsProgramCreate(gph, sh) != Result::eSuccess) {
@@ -392,7 +392,7 @@ void TransformSet(float *transform) {
 }
 
 void Submit(uint8_t target, GraphicsProgramHandle gph) {
-  // TODO : Target progrma compatiblity check.
+  // TODO : Target program compatiblity check.
   if (sShaderProgramCmds.size() > MAX_COMMAND_SUBMISSIONS) {
     sLogger->error("Application has exceeded maximum draw calls! Consider "
                    "batching or instancing.");
@@ -424,8 +424,7 @@ void Submit(uint8_t target, GraphicsProgramHandle gph) {
       (uint64_t)(gph.idx & 0xFFFF) << 48 |
       (uint64_t)(currentCommand->program.graphics.vbh.idx & 0xFFFF) << 32 |
       (uint64_t)(uniformHash & 0xFFFFFFFF);
-
-  sNextShaderProgramCmdIdx++;
+  currentCommand->submissionID = sNextShaderProgramCmdIdx++;
 }
 
 void Submit(uint8_t target, ComputeProgramHandle cph, uint32_t x, uint32_t y,
@@ -462,8 +461,7 @@ void Submit(uint8_t target, ComputeProgramHandle cph, uint32_t x, uint32_t y,
       (uint64_t)(cph.idx & 0xFFFF) << 48 |
       // (uint64_t)(currentCommand->program.graphics.vbh.idx & 0xFFFF) << 32 |
       (uint64_t)(uniformHash & 0xFFFFFFFF);
-
-  sNextShaderProgramCmdIdx++;
+  currentCommand->submissionID = sNextShaderProgramCmdIdx++;
 }
 
 CBZBool32 Frame() {

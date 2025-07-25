@@ -1618,9 +1618,10 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
 
       if (isIndexed) {
         wgpuRenderPassEncoderDrawIndexed(renderPassEncoder, indexCount, 1, 0, 0,
-                                         cmdIdx);
+                                         renderCmd.submissionID);
       } else {
-        wgpuRenderPassEncoderDraw(renderPassEncoder, vertexCount, 1, 0, cmdIdx);
+        wgpuRenderPassEncoderDraw(renderPassEncoder, vertexCount, 1, 0,
+                                  renderCmd.submissionID);
       }
     } break;
 
@@ -1634,6 +1635,19 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
   switch (targetType) {
   case CBZ_TARGET_TYPE_GRAPHICS: {
     if (renderPassEncoder != NULL) {
+      // TODO: Guarantee swapchain is last render target
+      ImGui_ImplWGPU_NewFrame();
+      ImGui_ImplGlfw_NewFrame();
+      ImGui::NewFrame();
+
+      ImGui::Begin("Pipeline state");
+      ImGui::Text("fps: %3.0f", ImGui::GetIO().Framerate);
+      ImGui::End();
+
+      ImGui::EndFrame();
+      ImGui::Render();
+      ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), renderPassEncoder);
+
       wgpuRenderPassEncoderEnd(renderPassEncoder);
       wgpuRenderPassEncoderRelease(renderPassEncoder);
       renderPassEncoder = nullptr;
@@ -1651,23 +1665,6 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
   case CBZ_TARGET_TYPE_NONE:
     break;
   }
-
-  // TODO: Move to swapchain render target
-  // ImGui_ImplWGPU_NewFrame();
-  // ImGui_ImplGlfw_NewFrame();
-  // ImGui::NewFrame();
-  //
-  // ImGui::Begin("Profiling");
-  // ImGui::Text("fps: %3.0f", ImGui::GetIO().Framerate);
-  //
-  // static float vec[3];
-  // ImGui::SliderFloat3("Color", vec, 0.0f, 100.0f);
-  //
-  // ImGui::End();
-  //
-  // ImGui::EndFrame();
-  // ImGui::Render();
-  // ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), renderPassEncoder);
 
   WGPUCommandBufferDescriptor cmdDesc = {};
   cmdDesc.nextInChain = nullptr;
