@@ -191,7 +191,7 @@ public:
   void vertexBufferDestroy(VertexBufferHandle vbh) override;
 
   [[nodiscard]] Result indexBufferCreate(IndexBufferHandle ibh,
-                                         IndexFormat format, uint32_t size,
+                                         CBZIndexFormat format, uint32_t size,
                                          const void *data = nullptr) override;
 
   void indexBufferDestroy(IndexBufferHandle ibh) override;
@@ -1003,6 +1003,7 @@ Result ShaderWebGPU::create(const std::string &path, CBZShaderFlags flags) {
         reinterpret_cast<const uint32_t *>(shaderSrcCode.data());
     shaderCodeDesc.codeSize =
         static_cast<uint32_t>(shaderSrcCode.size()) / sizeof(uint32_t);
+    shaderModuleDesc.nextInChain = &shaderCodeDesc.chain;
 
     mModule = wgpuDeviceCreateShaderModule(sDevice, &shaderModuleDesc);
     if (!mModule) {
@@ -1705,7 +1706,7 @@ void RendererContextWebGPU::vertexBufferDestroy(VertexBufferHandle vbh) {
 }
 
 Result RendererContextWebGPU::indexBufferCreate(IndexBufferHandle ibh,
-                                                IndexFormat format,
+                                                CBZIndexFormat format,
                                                 uint32_t count,
                                                 const void *data) {
   if (sIndexBuffers.size() < ibh.idx + 1u) {

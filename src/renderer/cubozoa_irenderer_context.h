@@ -172,7 +172,7 @@ public:
   virtual void vertexBufferDestroy(VertexBufferHandle vbh) = 0;
 
   [[nodiscard]] virtual Result
-  indexBufferCreate(IndexBufferHandle ibh, IndexFormat format, uint32_t size,
+  indexBufferCreate(IndexBufferHandle ibh, CBZIndexFormat format, uint32_t size,
                     const void *data = nullptr) = 0;
 
   virtual void indexBufferDestroy(IndexBufferHandle ibh) = 0;

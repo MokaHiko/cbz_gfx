@@ -148,7 +148,7 @@ void VertexBufferDestroy(VertexBufferHandle vbh) {
   }
 }
 
-IndexBufferHandle IndexBufferCreate(IndexFormat format, uint32_t count,
+IndexBufferHandle IndexBufferCreate(CBZIndexFormat format, uint32_t count,
                                     const void *data, const char *name) {
   IndexBufferHandle ibh = HandleProvider<IndexBufferHandle>::write(name);
 
@@ -338,7 +338,7 @@ void ShaderDestroy(ShaderHandle sh) {
   }
 }
 
-GraphicsProgramHandle GraphicsProgramCreate(ShaderHandle sh, int _) {
+GraphicsProgramHandle GraphicsProgramCreate(ShaderHandle sh, [[maybe_unused]] int _) {
   GraphicsProgramHandle gph = HandleProvider<GraphicsProgramHandle>::write();
 
   if (sRenderer->graphicsProgramCreate(gph, sh) != Result::eSuccess) {

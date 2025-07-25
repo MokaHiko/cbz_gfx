@@ -24,7 +24,7 @@ CBZ_API void VertexBufferSet(VertexBufferHandle vbh);
 CBZ_API void VertexBufferDestroy(VertexBufferHandle vbh);
 
 [[nodiscard]] CBZ_API IndexBufferHandle
-IndexBufferCreate(IndexFormat format, uint32_t num, const void *data = nullptr,
+IndexBufferCreate(CBZIndexFormat format, uint32_t num, const void *data = nullptr,
                   const char *name = "");
 
 CBZ_API void IndexBufferSet(IndexBufferHandle ibh);
