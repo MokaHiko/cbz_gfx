@@ -401,14 +401,15 @@ void Submit(uint8_t target, GraphicsProgramHandle gph) {
 
   StructuredBufferSet(CBZ_BUFFER_GLOBAL_TRANSFORM, sTransformSBH);
 
-  if (sNextShaderProgramCmdIdx >= MAX_COMMAND_BINDINGS) {
-    sLogger->error("Draw called exceeding max uniform binds {}",
-                   sNextShaderProgramCmdIdx);
+  ShaderProgramCommand *currentCommand =
+      &sShaderProgramCmds[sNextShaderProgramCmdIdx];
+
+  if (currentCommand->bindings.size() > MAX_COMMAND_BINDINGS) {
+    sLogger->error("Draw called exceeding max uniform binds {} > {}",
+                   currentCommand->bindings.size(), sNextShaderProgramCmdIdx);
     return;
   }
 
-  ShaderProgramCommand *currentCommand =
-      &sShaderProgramCmds[sNextShaderProgramCmdIdx];
   currentCommand->programType = CBZ_TARGET_TYPE_GRAPHICS;
 
   uint32_t uniformHash;
@@ -435,14 +436,15 @@ void Submit(uint8_t target, ComputeProgramHandle cph, uint32_t x, uint32_t y,
     return;
   }
 
-  if (sNextShaderProgramCmdIdx >= MAX_COMMAND_BINDINGS) {
-    sLogger->error("Submit called exceeding max uniform binds {}",
-                   sNextShaderProgramCmdIdx);
+  ShaderProgramCommand *currentCommand =
+      &sShaderProgramCmds[sNextShaderProgramCmdIdx];
+
+  if (currentCommand->bindings.size() > MAX_COMMAND_BINDINGS) {
+    sLogger->error("Draw called exceeding max uniform binds {} > {}",
+                   currentCommand->bindings.size(), sNextShaderProgramCmdIdx);
     return;
   }
 
-  ShaderProgramCommand *currentCommand =
-      &sShaderProgramCmds[sNextShaderProgramCmdIdx];
   currentCommand->programType = CBZ_TARGET_TYPE_COMPUTE;
 
   uint32_t uniformHash;
