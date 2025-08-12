@@ -3,10 +3,6 @@
 
 #include <cstdint>
 
-// TODO: Remove stl from public fns
-#include <vector>
-#include <limits>
-
 #ifndef CBZ_NULLABLE
 #ifdef __clang__
 #define CBZ_NULLABLE _Nullable
@@ -110,7 +106,6 @@ typedef enum {
 typedef enum {
   CBZ_VERTEX_STEP_MODE_VERTEX = 0x00000000,
   CBZ_VERTEX_STEP_INSTANCE = 0x00000001,
-  // eVertexBufferNotUsed = 0x00000002,
 
   CBZ_VERTEX_STEP_FORCE_32 = 0xFFFFFFFFu,
 } CBZVertexStepMode;
@@ -118,7 +113,9 @@ typedef enum {
 typedef enum {
   CBZ_VERTEX_ATTRIBUTE_POSITION = 0,
   CBZ_VERTEX_ATTRIBUTE_NORMAL,
+  CBZ_VERTEX_ATTRIBUTE_TANGENT,
   CBZ_VERTEX_ATTRIBUTE_TEXCOORD0,
+
   // eColor,
   // eTangent,
   // eJoints,
@@ -180,8 +177,10 @@ typedef enum {
   CBZ_TEXTURE_FORMAT_DEPTH16UNORM = 0X00000027,
   CBZ_TEXTURE_FORMAT_DEPTH24PLUS = 0X00000028,
   CBZ_TEXTURE_FORMAT_DEPTH24PLUSSTENCIL8 = 0X00000029,
+
   CBZ_TEXTURE_FORMAT_DEPTH32FLOAT = 0X0000002A,
   CBZ_TEXTURE_FORMAT_DEPTH32FLOATSTENCIL8 = 0X0000002B,
+
   CBZ_TEXTURE_FORMAT_BC1RGBAUNORM = 0X0000002C,
   CBZ_TEXTURE_FORMAT_BC1RGBAUNORMSRGB = 0X0000002D,
   CBZ_TEXTURE_FORMAT_BC2RGBAUNORM = 0X0000002E,
@@ -236,6 +235,26 @@ typedef enum {
   CBZ_TEXTURE_FORMAT_ASTC12X12UNORMSRGB = 0X0000005F,
 } CBZTextureFormat;
 
+typedef enum {
+  CBZ_IMAGE_NONE = 0,
+
+  // Image can be used as binding via TextureSet() or ImageSet()
+  CBZ_IMAGE_BINDING = 1 << 0,
+
+  CBZ_IMAGE_COPY_SRC = 1 << 1,
+
+  // Image can be used as a color/depth attachment
+  CBZ_IMAGE_RENDER_ATTACHMENT = 1 << 2,
+} CBZImageFlags;
+
+typedef enum {
+  CBZ_RENDER_ATTACHMENT_NONE = 0,
+
+  CBZ_RENDER_ATTACHMENT_BLEND = 1 << 0,
+
+  // CBZ_RENDER_ATTACHMENT_BLEND = 1 << 1,
+} CBZRenderAttachmentFlags;
+
 // @note one to one mapping with 'WGPUTextureDimension'
 typedef enum {
   CBZ_TEXTURE_DIMENSION_1D = 0x00000000,
@@ -275,12 +294,28 @@ typedef enum {
   CBZ_UNIFORM_TYPE_VEC4,     // float[4]
   CBZ_UNIFORM_TYPE_MAT4,     // float[16]
 } CBZUniformType;
+static const uint32_t CBZ_UNIFORM_SIZE_VEC4 = sizeof(float) * 4;
+static const uint32_t CBZ_UNIFORM_SIZE_MAT4 = sizeof(float) * 16;
 
 typedef enum {
   CBZ_TARGET_TYPE_NONE,
   CBZ_TARGET_TYPE_GRAPHICS,
   CBZ_TARGET_TYPE_COMPUTE,
 } CBZTargetType;
+
+typedef enum {
+  CBZ_BUFFER = 0,
+  CBZ_BUFFER_COPY_SRC = 1 << 0,
+  CBZ_BUFFER_COPY_DST = 1 << 1,
+} CBZBufferFlags;
+
+typedef enum {
+  CBZ_GRAPHICS_PROGRAM_NONE = 0,
+  CBZ_GRAPHICS_PROGRAM_FRONT_FACE_CW = 1 << 0,
+  CBZ_GRAPHICS_PROGRAM_FRONT_FACE_CCW = 1 << 1,
+  CBZ_GRAPHICS_PROGRAM_CULL_BACK = 1 << 2,
+  CBZ_GRAPHICS_PROGRAM_CULL_FRONT = 1 << 3,
+} CBZGraphicsProgramFlags;
 
 typedef enum {
   CBZ_BUFFER_0 = 0,
@@ -296,6 +331,7 @@ typedef enum {
   CBZ_TEXTURE_1 = 6,
   CBZ_TEXTURE_2 = 8,
   CBZ_TEXTURE_3 = 10,
+  CBZ_TEXTURE_4 = 12,
 } CBZTextureSlot;
 
 typedef enum {
@@ -304,23 +340,18 @@ typedef enum {
   CBZ_NETWORK_CLIENT,
 } CBZNetworkStatus;
 
+constexpr uint8_t CBZ_DEFAULT_RENDER_TARGET = UINT8_MAX - 1;
+constexpr uint8_t CBZ_INVALID_RENDER_TARGET = UINT8_MAX;
+
 namespace cbz {
-// Minimum renderer limits
-constexpr uint32_t MAX_TARGETS = 128;
-static_assert(MAX_TARGETS <= std::numeric_limits<uint32_t>::max(),
-              "MAX_TARGETS must fit in a uint32_t");
-
-constexpr uint32_t MAX_COMMAND_SUBMISSIONS = 128;
-static_assert(MAX_COMMAND_SUBMISSIONS <= std::numeric_limits<uint32_t>::max(),
-              "MAX_DRAW_CALLS must fit in a uint32_t");
-
-constexpr uint32_t MAX_COMMAND_TEXTURES = 32;
-static_assert(MAX_COMMAND_TEXTURES <= std::numeric_limits<uint32_t>::max(),
-              "MAX_COMMAND_TEXTURES must fit in a uint32_t");
-
-constexpr uint32_t MAX_COMMAND_BINDINGS = 16;
-static_assert(MAX_COMMAND_BINDINGS <= std::numeric_limits<uint32_t>::max(),
-              "MAX_COMMAND_BINDINGS must fit in a uint32_t");
+typedef enum : uint32_t {
+  MAX_TARGETS = 128,
+  MAX_TARGET_COLOR_ATTACHMENTS = 4,
+  MAX_COMMAND_SUBMISSIONS = 512,
+  MAX_COMMAND_TEXTURES = 32,
+  MAX_COMMAND_BINDINGS = 16,
+  COPY_BYTES_PER_ROW_ALIGNMENT = 256,
+} CBZRendererLimits;
 
 [[nodiscard]] constexpr uint32_t VertexFormatGetSize(CBZVertexFormat format) {
   switch (format) {
@@ -485,13 +516,69 @@ TextureFormatGetSize(CBZTextureFormat format) {
   }
 }
 
-struct VertexAttribute {
+CBZ_API struct VertexAttribute {
   CBZVertexFormat format;
   uint64_t offset;
   uint32_t shaderLocation;
 };
 
-class VertexLayout {
+CBZ_API struct Origin3D {
+  uint32_t x;
+  uint32_t y;
+  uint32_t z;
+};
+
+CBZ_API struct TextureExtent {
+  int width;
+  int height;
+  int layers;
+};
+
+// TODO: Make invalid handle 0
+//  @note Handles may be recycled when destroyed
+#define CBZ_INVALID_HANDLE ((uint16_t)0xFFFF)
+#define CBZ_HANDLE(name)                                                       \
+  CBZ_API struct name {                                                        \
+    uint16_t idx;                                                              \
+    explicit operator bool() const { return idx != CBZ_INVALID_HANDLE; }       \
+  };
+
+CBZ_HANDLE(VertexBufferHandle);
+CBZ_HANDLE(IndexBufferHandle);
+
+CBZ_HANDLE(StructuredBufferHandle);
+CBZ_HANDLE(ImageHandle);
+
+CBZ_API struct SamplerHandle {
+  uint32_t idx;
+};
+
+CBZ_API struct AttachmentDescription {
+  cbz::ImageHandle
+      imgh; // Image Handle created with CBZ_IMAGE_RENDER_ATTACHMENT
+  struct Color {
+    double r;
+    double g;
+    double b;
+    double a;
+  } clearValue; // Color clear values
+  int flags;    // CBZRenderAttachmentFlags
+};
+
+CBZ_HANDLE(UniformHandle);
+
+CBZ_HANDLE(ShaderHandle);
+CBZ_HANDLE(GraphicsProgramHandle);
+CBZ_HANDLE(ComputeProgramHandle);
+
+CBZ_HANDLE(FramebufferHandle);
+
+}; // namespace cbz
+
+// TODO: Remove stl from public fns
+#include <vector>
+namespace cbz {
+CBZ_API class VertexLayout {
 public:
   void begin(CBZVertexStepMode mode);
   void push_attribute(CBZVertexAttributeType type, CBZVertexFormat format);
@@ -504,30 +591,6 @@ public:
   CBZVertexStepMode stepMode;
   uint32_t stride;
 };
-
-// @note Handles may be recycled when destroyed
-#define CBZ_INVALID_HANDLE ((uint16_t)0xFFFF)
-#define CBZ_HANDLE(name)                                                       \
-  CBZ_API struct name {                                                        \
-    uint16_t idx;                                                              \
-  };
-
-CBZ_HANDLE(VertexBufferHandle);
-CBZ_HANDLE(IndexBufferHandle);
-
-CBZ_HANDLE(StructuredBufferHandle);
-CBZ_HANDLE(TextureHandle);
-
-struct SamplerHandle {
-  uint32_t idx;
-};
-
-CBZ_HANDLE(UniformHandle);
-
-CBZ_HANDLE(ShaderHandle);
-CBZ_HANDLE(GraphicsProgramHandle);
-CBZ_HANDLE(ComputeProgramHandle);
-
-}; // namespace cbz
+} // namespace cbz
 
 #endif

@@ -2,6 +2,7 @@
 #define CBZ_IRENDERER_CONTEXT_H_
 
 #include "cubozoa/cubozoa_defines.h"
+#include "spdlog/spdlog.h"
 
 namespace cbz {
 
@@ -117,7 +118,7 @@ struct Binding {
 
     struct {
       uint32_t slot;
-      TextureHandle handle;
+      ImageHandle handle;
     } texture;
 
     struct {
@@ -146,6 +147,7 @@ struct ShaderProgramCommand {
       ComputeProgramHandle ph;
     } compute;
   } program;
+
   CBZTargetType programType;
 
   std::vector<Binding> bindings;
@@ -157,12 +159,20 @@ struct ShaderProgramCommand {
   inline uint32_t getDescriptorHash() const { return sortKey & 0xFFFFFFFF; }
 };
 
+// @brief A render target represents a framebuffer or a compute pass.
+struct RenderTarget {
+  std::vector<AttachmentDescription> colorAttachments;
+  AttachmentDescription depthAttachment = {
+      ImageHandle{CBZ_INVALID_HANDLE}, {}, 0};
+};
+
 class IRendererContext {
 public:
   IRendererContext() = default;
   virtual ~IRendererContext() = default;
 
-  virtual Result init(uint32_t width, uint32_t height, void *nsfh) = 0;
+  virtual Result init(uint32_t width, uint32_t height, void *nsfh,
+                      ImageHandle swapchainIMGH) = 0;
 
   virtual void shutdown() = 0;
 
@@ -182,14 +192,15 @@ public:
   uniformBufferCreate(UniformHandle uh, CBZUniformType type, uint16_t num,
                       const void *data = nullptr) = 0;
 
-  virtual void uniformBufferUpdate(UniformHandle uh, void *data,
+  virtual void uniformBufferUpdate(UniformHandle uh, const void *data,
                                    uint16_t num = 0) = 0;
 
   virtual void uniformBufferDestroy(UniformHandle uh) = 0;
 
   [[nodiscard]] virtual Result
   structuredBufferCreate(StructuredBufferHandle sbh, CBZUniformType type,
-                         uint32_t elementCount, const void *data = nullptr) = 0;
+                         uint32_t elementCount, const void *data,
+                         int flags) = 0;
 
   virtual void structuredBufferUpdate(StructuredBufferHandle sbh,
                                       uint32_t elementCount, const void *data,
@@ -200,14 +211,15 @@ public:
   [[nodiscard]] virtual SamplerHandle
   getSampler(TextureBindingDesc texBindingDesc) = 0;
 
-  [[nodiscard]] virtual Result textureCreate(TextureHandle uh,
-                                             CBZTextureFormat format,
-                                             uint32_t x, uint32_t y, uint32_t z,
-                                             CBZTextureDimension dimension) = 0;
+  [[nodiscard]] virtual Result imageCreate(ImageHandle uh,
+                                           CBZTextureFormat format, uint32_t w,
+                                           uint32_t h, uint32_t depth,
+                                           CBZTextureDimension dimension,
+                                           CBZImageFlags flags) = 0;
 
-  virtual void textureUpdate(TextureHandle th, void *data, uint32_t count) = 0;
+  virtual void imageUpdate(ImageHandle th, void *data, uint32_t count) = 0;
 
-  virtual void textureDestroy(TextureHandle th) = 0;
+  virtual void imageDestroy(ImageHandle th) = 0;
 
   [[nodiscard]] virtual Result shaderCreate(ShaderHandle sh,
                                             CBZShaderFlags flags,
@@ -216,16 +228,27 @@ public:
   virtual void shaderDestroy(ShaderHandle sh) = 0;
 
   [[nodiscard]] virtual Result graphicsProgramCreate(GraphicsProgramHandle gph,
-                                                     ShaderHandle sh) = 0;
+                                                     ShaderHandle sh,
+                                                     int flags) = 0;
   virtual void graphicsProgramDestroy(GraphicsProgramHandle gph) = 0;
 
   [[nodiscard]] virtual Result computeProgramCreate(ComputeProgramHandle cph,
                                                     ShaderHandle sh) = 0;
 
+  virtual void
+  readBufferAsync(StructuredBufferHandle sbh,
+                  std::function<void(const void *data)> callback) = 0;
+
+  virtual void
+  textureReadAsync(ImageHandle imgh, const Origin3D *origin,
+                   const TextureExtent *extent,
+                   std::function<void(const void *data)> callback) = 0;
+
   virtual void computeProgramDestroy(ComputeProgramHandle cph) = 0;
 
-  virtual void submitSorted(const ShaderProgramCommand *sortedCmds,
-                            uint32_t count) = 0;
+  virtual uint32_t submitSorted(const std::vector<RenderTarget> &renderTargets,
+                                const ShaderProgramCommand *sortedCmds,
+                                uint32_t count) = 0;
 };
 
 }; // namespace cbz

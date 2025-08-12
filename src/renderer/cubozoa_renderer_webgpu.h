@@ -1,7 +1,9 @@
 #ifndef CBZ_RENDERER_WGPU_H_
 #define CBZ_RENDERER_WGPU_H_
 
+#include "cubozoa/cubozoa_defines.h"
 #include "cubozoa_irenderer_context.h"
+#include <unordered_map>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -141,6 +143,7 @@ class StorageBufferWebWGPU {
 public:
   [[nodiscard]] Result create(CBZUniformType type, uint32_t num,
                               const void *data = nullptr,
+                              WGPUBufferUsageFlags usage = 0,
                               const std::string &name = "");
 
   void update(const void *data, uint32_t elementCount,
@@ -164,6 +167,7 @@ public:
   }
 
 private:
+  friend class RendererContextWebGPU;
   WGPUBuffer mBuffer;
 
   CBZUniformType mElementType;
@@ -174,27 +178,43 @@ class TextureWebGPU {
 public:
   Result create(uint32_t w, uint32_t h, uint32_t depth,
                 WGPUTextureDimension dimension, WGPUTextureFormat format,
-                const std::string &name = "");
+                WGPUTextureUsageFlags usage, const std::string &name = "");
+
+  Result create(WGPUTexture texture);
 
   void update(void *data, uint32_t count);
 
-  [[nodiscard]] WGPUBindGroupEntry createBindGroupEntry(uint32_t binding);
+  [[nodiscard]] inline WGPUTextureFormat getFormat() const {
+    return wgpuTextureGetFormat(mTexture);
+  }
 
+  [[nodiscard]] inline WGPUExtent3D getExtent() const {
+    return {wgpuTextureGetWidth(mTexture), wgpuTextureGetHeight(mTexture),
+            wgpuTextureGetDepthOrArrayLayers(mTexture)};
+  }
+
+  [[nodiscard]] WGPUBindGroupEntry createBindGroupEntry(uint32_t binding);
   [[nodiscard]] WGPUTextureView
   findOrCreateTextureView(WGPUTextureAspect aspect);
+
+  void destroyTextureViews();
 
   void destroy();
 
 private:
+  friend class RendererContextWebGPU;
+
   WGPUTexture mTexture;
   std::unordered_map<uint32_t, WGPUTextureView> mViews;
 };
 
 class GraphicsProgramWebGPU {
 public:
-  [[nodiscard]] Result create(ShaderHandle sh, const std::string &name = "");
+  [[nodiscard]] Result create(ShaderHandle sh, int flags,
+                              const std::string &name = "");
 
-  [[nodiscard]] Result bind(WGPURenderPassEncoder renderPassEncoder) const;
+  [[nodiscard]] WGPURenderPipeline
+  findOrCreatePipeline(const RenderTarget &target);
 
   [[nodiscard]] inline const ShaderHandle getShader() const {
     return mShaderHandle;
@@ -203,6 +223,9 @@ public:
   void destroy();
 
 private:
+  std::unordered_map<uint32_t, WGPURenderPipeline> mPipelines;
+
+  int mFlags;
   ShaderHandle mShaderHandle;
 
   WGPUPipelineLayout mPipelineLayout;

@@ -4,8 +4,13 @@
 #include "cubozoa/cubozoa_defines.h"
 #include "cubozoa/net/cubozoa_net.h"
 #include "renderer/cubozoa_irenderer_context.h"
+#include "spdlog/spdlog.h"
+
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <GLFW/glfw3.h>
+#include <cstdint>
 #include <murmurhash/MurmurHash3.h>
 
 namespace cbz {
@@ -15,7 +20,19 @@ static GLFWwindow *sWindow;
 static std::shared_ptr<spdlog::logger> sLogger;
 
 // --- Input ---
-static std::array<bool, static_cast<uint32_t>(Key::eCount)> sKeyMap;
+static std::array<CBZBool32, static_cast<uint32_t>(Key::eCount)>
+    sLastFrameKeyMap;
+static std::array<CBZBool32, static_cast<uint32_t>(Key::eCount)> sKeyMap;
+
+static std::array<CBZBool32, static_cast<uint32_t>(MouseButton::eCount)>
+    sLastFrameMouseButtonMap;
+static std::array<CBZBool32, static_cast<uint32_t>(MouseButton::eCount)>
+    sMouseButtonMap;
+
+static MousePosition sMousePosition = {0, 0};
+static double sMouseDeltaX = 0.0;
+static double sMouseDeltaY = 0.0;
+
 static void InputKeyCallback(GLFWwindow *, int key, int, int action, int) {
   if (key == GLFW_KEY_UNKNOWN)
     return;
@@ -27,7 +44,41 @@ static void InputKeyCallback(GLFWwindow *, int key, int, int action, int) {
   }
 }
 
-void InputInit() { glfwSetKeyCallback(sWindow, InputKeyCallback); }
+static void MouseButtonCallback(GLFWwindow *, int button, int action,
+                                [[maybe_unused]] int mods) {
+  if (action == GLFW_PRESS) {
+    sMouseButtonMap[button] = true;
+  } else if (action == GLFW_RELEASE) {
+    sMouseButtonMap[button] = false;
+  }
+}
+static void MouseMoveCallback(GLFWwindow *_, double xpos, double ypos) {
+  sMouseDeltaX = xpos - static_cast<double>(sMousePosition.x);
+  sMouseDeltaY = ypos - static_cast<double>(sMousePosition.y);
+
+  sMousePosition = {static_cast<uint32_t>(xpos), static_cast<uint32_t>(ypos)};
+}
+
+void InputInit() {
+  glfwSetKeyCallback(sWindow, InputKeyCallback);
+  glfwSetMouseButtonCallback(sWindow, MouseButtonCallback);
+  glfwSetCursorPosCallback(sWindow, MouseMoveCallback);
+
+  double xpos, ypos;
+  glfwGetCursorPos(sWindow, &xpos, &ypos);
+  sMousePosition = {static_cast<uint32_t>(xpos), static_cast<uint32_t>(ypos)};
+}
+
+void InputUpdate() {
+  std::memcpy(sLastFrameKeyMap.data(), sKeyMap.data(),
+              sizeof(CBZBool32) * sKeyMap.size());
+  std::memcpy(sLastFrameMouseButtonMap.data(), sMouseButtonMap.data(),
+              sizeof(CBZBool32) * sMouseButtonMap.size());
+
+  // Clear deltas
+  sMouseDeltaX = 0.0;
+  sMouseDeltaY = 0.0;
+}
 
 CBZBool32 IsKeyDown(Key key) {
   if (static_cast<uint32_t>(key) >= static_cast<uint32_t>(Key::eCount)) {
@@ -36,6 +87,56 @@ CBZBool32 IsKeyDown(Key key) {
 
   return static_cast<CBZBool32>(sKeyMap[static_cast<uint32_t>(key)]);
 }
+
+CBZBool32 IsKeyPressed(Key key) {
+  if (static_cast<uint32_t>(key) >= static_cast<uint32_t>(Key::eCount)) {
+    return false;
+  }
+
+  // Pressed this frame and was not pressed last frame
+  return static_cast<CBZBool32>(sKeyMap[static_cast<uint32_t>(key)]) &&
+         !static_cast<CBZBool32>(sLastFrameKeyMap[static_cast<uint32_t>(key)]);
+}
+
+MousePosition GetMousePosition() { return sMousePosition; }
+
+CBZBool32 IsMouseButtonDown(MouseButton mouseButton) {
+  if (static_cast<uint32_t>(mouseButton) >=
+      static_cast<uint32_t>(MouseButton::eCount)) {
+    return false;
+  }
+
+  return static_cast<CBZBool32>(
+      sMouseButtonMap[static_cast<uint32_t>(mouseButton)]);
+}
+
+CBZBool32 IsMouseButtonPressed(MouseButton mouseButton) {
+  if (static_cast<uint32_t>(mouseButton) >=
+      static_cast<uint32_t>(MouseButton::eCount)) {
+    return false;
+  }
+
+  // Pressed this frame and was not pressed last frame
+  return static_cast<CBZBool32>(
+             sMouseButtonMap[static_cast<uint32_t>(mouseButton)]) &&
+         !static_cast<CBZBool32>(
+             sLastFrameMouseButtonMap[static_cast<uint32_t>(mouseButton)]);
+}
+
+namespace input {
+
+double GetAxis(Axis axis) {
+  switch (axis) {
+  case Axis::MouseX: {
+    return glm::sign(sMouseDeltaX);
+  } break;
+  case Axis::MouseY: {
+    return -glm::sign(sMouseDeltaY);
+  } break;
+  }
+}
+
+}; // namespace input
 
 // --- Renderer ---
 struct TransformData {
@@ -48,13 +149,16 @@ struct TransformData {
   float inverseProj[16];
 };
 
-static std::vector<ShaderProgramCommand> sShaderProgramCmds;
+// TODO: Safe draw count
 static uint32_t sNextShaderProgramCmdIdx;
+static std::vector<ShaderProgramCommand> sShaderProgramCmds;
 
 static std::unique_ptr<cbz::IRendererContext> sRenderer;
 
 static StructuredBufferHandle sTransformSBH;
 static std::array<TransformData, MAX_COMMAND_SUBMISSIONS> sTransforms;
+
+static std::vector<RenderTarget> sRenderTargets;
 
 Result Init(InitDesc initDesc) {
   Result result = Result::eSuccess;
@@ -75,9 +179,9 @@ Result Init(InitDesc initDesc) {
     break;
   }
 
-  // if (result != Result::eSuccess) {
-  //   return result;
-  // };
+  if (result != Result::eSuccess) {
+    return result;
+  };
 
   if (glfwInit() != GLFW_TRUE) {
     sLogger->critical("Failed to initialize glfw!");
@@ -98,8 +202,9 @@ Result Init(InitDesc initDesc) {
   InputInit();
 
   sRenderer = RendererContextCreate();
-  if (sRenderer->init(initDesc.width, initDesc.height, sWindow) !=
-      Result::eSuccess) {
+  if (sRenderer->init(initDesc.width, initDesc.height, sWindow,
+                      HandleProvider<ImageHandle>::write(
+                          "CurrentSurfaceImage")) != Result::eSuccess) {
     return Result::eFailure;
   }
 
@@ -109,6 +214,14 @@ Result Init(InitDesc initDesc) {
   data.transform[5] = 1;
   data.transform[10] = 1;
   data.transform[15] = 1;
+  data.view[0] = 1;
+  data.view[5] = 1;
+  data.view[10] = 1;
+  data.view[15] = 1;
+  data.proj[0] = 1;
+  data.proj[5] = 1;
+  data.proj[10] = 1;
+  data.proj[15] = 1;
   sTransforms.fill(data);
 
   sTransformSBH = StructuredBufferCreate(
@@ -141,10 +254,13 @@ void VertexBufferSet(VertexBufferHandle vbh) {
 }
 
 void VertexBufferDestroy(VertexBufferHandle vbh) {
-  if (HandleProvider<VertexBufferHandle>::isValid(vbh)) {
-    sRenderer->vertexBufferDestroy(vbh);
-    HandleProvider<VertexBufferHandle>::free(vbh);
+  if (!HandleProvider<VertexBufferHandle>::isValid(vbh)) {
+    sLogger->warn("Attempting to destroy invalid 'VertexBufferHandle'!");
+    return;
   }
+
+  sRenderer->vertexBufferDestroy(vbh);
+  HandleProvider<VertexBufferHandle>::free(vbh);
 }
 
 IndexBufferHandle IndexBufferCreate(CBZIndexFormat format, uint32_t count,
@@ -165,21 +281,24 @@ void IndexBufferSet(IndexBufferHandle ibh) {
 }
 
 void IndexBufferDestroy(IndexBufferHandle ibh) {
-  if (HandleProvider<IndexBufferHandle>::isValid(ibh)) {
-    sRenderer->indexBufferDestroy(ibh);
-    HandleProvider<IndexBufferHandle>::free(ibh);
+  if (!HandleProvider<IndexBufferHandle>::isValid(ibh)) {
+    sLogger->warn("Attempting to destroy invalid 'VertexBufferHandle'!");
+    return;
   }
+
+  sRenderer->indexBufferDestroy(ibh);
+  HandleProvider<IndexBufferHandle>::free(ibh);
 }
 
 StructuredBufferHandle StructuredBufferCreate(CBZUniformType type,
                                               uint32_t elementCount,
                                               const void *elementData,
-                                              const char *name) {
+                                              int flags, const char *name) {
   StructuredBufferHandle sbh =
       HandleProvider<StructuredBufferHandle>::write(name);
 
-  if (sRenderer->structuredBufferCreate(sbh, type, elementCount, elementData) !=
-      Result::eSuccess) {
+  if (sRenderer->structuredBufferCreate(sbh, type, elementCount, elementData,
+                                        flags) != Result::eSuccess) {
 
     HandleProvider<StructuredBufferHandle>::free(sbh);
     return {CBZ_INVALID_HANDLE};
@@ -233,12 +352,13 @@ UniformHandle UniformCreate(const char *name, CBZUniformType type,
   return uh;
 }
 
-void UniformSet(UniformHandle uh, void *data, uint16_t num) {
+void UniformSet(UniformHandle uh, const void *data, uint16_t num) {
   if (!HandleProvider<UniformHandle>::isValid(uh)) {
-    sLogger->warn("Attempting to set uniform with invalid handle!");
+    sLogger->error("Attempting to set uniform with invalid handle!");
     return;
   }
 
+  // TODO: Allow uniform update between submissions
   sRenderer->uniformBufferUpdate(uh, data, num);
 
   Binding binding = {};
@@ -258,22 +378,47 @@ void UniformDestroy(UniformHandle uh) {
   HandleProvider<UniformHandle>::free(uh);
 }
 
-TextureHandle Texture2DCreate(CBZTextureFormat format, uint32_t w, uint32_t h,
-                              const char *name) {
-  TextureHandle uh = HandleProvider<TextureHandle>::write(name);
+ImageHandle Image2DCreate(CBZTextureFormat format, uint32_t w, uint32_t h,
+                          int flags) {
+  ImageHandle uh = HandleProvider<ImageHandle>::write();
 
   // Prefer uniform buffer
-  if (sRenderer->textureCreate(uh, format, w, h, 1, CBZ_TEXTURE_DIMENSION_2D) !=
+  if (sRenderer->imageCreate(uh, format, w, h, 1, CBZ_TEXTURE_DIMENSION_2D,
+                             static_cast<CBZImageFlags>(flags)) !=
       Result::eSuccess) {
-    HandleProvider<TextureHandle>::free(uh);
+    HandleProvider<ImageHandle>::free(uh);
     return {CBZ_INVALID_HANDLE};
   }
 
   return uh;
 }
 
-void Texture2DUpdate(TextureHandle th, void *data, uint32_t count) {
-  sRenderer->textureUpdate(th, data, count);
+ImageHandle Image2DCubeMapCreate(CBZTextureFormat format, uint32_t w,
+                                 uint32_t h, uint32_t depth, int flags) {
+  ImageHandle uh = HandleProvider<ImageHandle>::write();
+
+  // Prefer uniform buffer
+  if (sRenderer->imageCreate(uh, format, w, h, depth, CBZ_TEXTURE_DIMENSION_2D,
+                             static_cast<CBZImageFlags>(flags)) !=
+      Result::eSuccess) {
+    HandleProvider<ImageHandle>::free(uh);
+    return {CBZ_INVALID_HANDLE};
+  }
+
+  return uh;
+}
+
+void ImageSetName(ImageHandle imgh, const char *name, uint32_t len) {
+  if (!HandleProvider<ImageHandle>::isValid(imgh)) {
+    sLogger->error("Attempting to name invalid image handle!");
+    return;
+  }
+
+  HandleProvider<ImageHandle>::setName(imgh, std::string(name, len));
+}
+
+void Image2DUpdate(ImageHandle th, void *data, uint32_t count) {
+  sRenderer->imageUpdate(th, data, count);
 }
 
 static void SamplerBind(CBZTextureSlot textureSlot, TextureBindingDesc desc) {
@@ -285,8 +430,13 @@ static void SamplerBind(CBZTextureSlot textureSlot, TextureBindingDesc desc) {
   sShaderProgramCmds[sNextShaderProgramCmdIdx].bindings.push_back(binding);
 }
 
-void TextureSet(CBZTextureSlot slot, TextureHandle th,
-                TextureBindingDesc desc) {
+void TextureSet(CBZTextureSlot slot, ImageHandle th, TextureBindingDesc desc) {
+  if (th.idx == CBZ_INVALID_HANDLE) {
+    sLogger->error("Attempting to bind invalid handle at texture slot @{}!",
+                   static_cast<uint32_t>(slot));
+    return;
+  }
+
   Binding binding = {};
   binding.type = BindingType::eTexture2D;
   binding.value.texture.slot = static_cast<uint8_t>(slot);
@@ -298,14 +448,14 @@ void TextureSet(CBZTextureSlot slot, TextureHandle th,
   }
 }
 
-void TextureDestroy(TextureHandle th) {
-  if (!HandleProvider<TextureHandle>::isValid(th)) {
-    sLogger->warn("Attempting to destroy invalid 'TextureHandle'!");
+void ImageDestroy(ImageHandle imgh) {
+  if (!HandleProvider<ImageHandle>::isValid(imgh)) {
+    sLogger->warn("Attempting to destroy invalid 'ImageHandle'!");
     return;
   }
 
-  sRenderer->textureDestroy(th);
-  HandleProvider<TextureHandle>::free(th);
+  sRenderer->imageDestroy(imgh);
+  HandleProvider<ImageHandle>::free(imgh);
 }
 
 ShaderHandle ShaderCreate(const char *path, int flags) {
@@ -337,11 +487,16 @@ void ShaderDestroy(ShaderHandle sh) {
   }
 }
 
-GraphicsProgramHandle GraphicsProgramCreate(ShaderHandle sh,
-                                            [[maybe_unused]] int _) {
+GraphicsProgramHandle GraphicsProgramCreate(ShaderHandle sh, int flags) {
+  if (sh.idx == CBZ_INVALID_HANDLE) {
+    sLogger->error(
+        "Attempting to create graphics program with invalid shader handle!");
+    return {CBZ_INVALID_HANDLE};
+  }
+
   GraphicsProgramHandle gph = HandleProvider<GraphicsProgramHandle>::write();
 
-  if (sRenderer->graphicsProgramCreate(gph, sh) != Result::eSuccess) {
+  if (sRenderer->graphicsProgramCreate(gph, sh, flags) != Result::eSuccess) {
     HandleProvider<GraphicsProgramHandle>::free(gph);
     return {CBZ_INVALID_HANDLE};
   }
@@ -387,15 +542,60 @@ void ComputeProgramDestroy(ComputeProgramHandle cph) {
   }
 }
 
-void TransformSet(float *transform) {
-  memcpy(&sTransforms[sNextShaderProgramCmdIdx], transform, sizeof(float) * 16);
+void TransformSet(const float *transform) {
+  memcpy(&sTransforms[sNextShaderProgramCmdIdx].transform, transform,
+         sizeof(float) * 16);
+
+  glm::mat4 inverseTransform = glm::inverse(glm::make_mat4(transform));
+  memcpy(&sTransforms[sNextShaderProgramCmdIdx].inverseTransform,
+         glm::value_ptr(inverseTransform), sizeof(float) * 16);
+}
+
+void ViewSet(const float *view) {
+  memcpy(&sTransforms[sNextShaderProgramCmdIdx].view, view, sizeof(float) * 16);
+
+  glm::mat4 inverseView = glm::inverse(glm::make_mat4(view));
+  memcpy(&sTransforms[sNextShaderProgramCmdIdx].inverseView,
+         glm::value_ptr(inverseView), sizeof(float) * 16);
+}
+
+void ProjectionSet(const float *proj) {
+  memcpy(&sTransforms[sNextShaderProgramCmdIdx].proj, proj, sizeof(float) * 16);
+
+  glm::mat4 inverseProj = glm::inverse(glm::make_mat4(proj));
+  memcpy(&sTransforms[sNextShaderProgramCmdIdx].inverseProj,
+         glm::value_ptr(inverseProj), sizeof(float) * 16);
+}
+
+void RenderTargetSet(uint8_t target,
+                     const AttachmentDescription *colorAttachments,
+                     uint32_t colorAttachmentCount,
+                     const AttachmentDescription *depthAttachment) {
+  if (target >= sRenderTargets.size()) {
+    sRenderTargets.resize(target + 1u);
+  }
+
+  sRenderTargets[target].colorAttachments.clear();
+  for (uint32_t i = 0; i < colorAttachmentCount; i++) {
+    sRenderTargets[target].colorAttachments.emplace_back(colorAttachments[i]);
+  }
+
+  if (depthAttachment) {
+    sRenderTargets[target].depthAttachment = *depthAttachment;
+  }
 }
 
 void Submit(uint8_t target, GraphicsProgramHandle gph) {
+  if (gph.idx == CBZ_INVALID_HANDLE) {
+    sLogger->critical("Attempting to submit with invalid program handle!");
+    exit(0);
+    return;
+  }
+
   // TODO : Target program compatiblity check.
   if (sShaderProgramCmds.size() > MAX_COMMAND_SUBMISSIONS) {
-    sLogger->error("Application has exceeded maximum draw calls! Consider "
-                   "batching or instancing.");
+    sLogger->error("Application has exceeded maximum draw calls {}!",
+                   static_cast<uint32_t>(MAX_COMMAND_SUBMISSIONS));
     return;
   }
 
@@ -404,9 +604,11 @@ void Submit(uint8_t target, GraphicsProgramHandle gph) {
   ShaderProgramCommand *currentCommand =
       &sShaderProgramCmds[sNextShaderProgramCmdIdx];
 
-  if (currentCommand->bindings.size() > MAX_COMMAND_BINDINGS) {
-    sLogger->error("Draw called exceeding max uniform binds {} > {}",
+  if (currentCommand->bindings.size() >
+      static_cast<uint64_t>(MAX_COMMAND_BINDINGS)) {
+    sLogger->error("Draw called exceeding max bindings {} > {}",
                    currentCommand->bindings.size(), sNextShaderProgramCmdIdx);
+    sNextShaderProgramCmdIdx++;
     return;
   }
 
@@ -430,7 +632,7 @@ void Submit(uint8_t target, GraphicsProgramHandle gph) {
 
 void Submit(uint8_t target, ComputeProgramHandle cph, uint32_t x, uint32_t y,
             uint32_t z) {
-  // TODO : Target progrma compatiblity check.
+  // TODO : Target program compatiblity check.
   if (sShaderProgramCmds.size() > MAX_COMMAND_SUBMISSIONS) {
     sLogger->error("Application has exceeded maximum submits calls!");
     return;
@@ -466,7 +668,30 @@ void Submit(uint8_t target, ComputeProgramHandle cph, uint32_t x, uint32_t y,
   currentCommand->submissionID = sNextShaderProgramCmdIdx++;
 }
 
-CBZBool32 Frame() {
+void ReadBufferAsync(StructuredBufferHandle sbh,
+                     std::function<void(const void *data)> callback) {
+  if (sbh.idx == CBZ_INVALID_HANDLE) {
+    sLogger->error("Attempting to read buffer with invalid handle!");
+    return;
+  }
+
+  sRenderer->readBufferAsync(sbh, callback);
+}
+
+void TextureReadAsync(ImageHandle imgh, const Origin3D *origin,
+                      const TextureExtent *extent,
+                      std::function<void(const void *data)> callback) {
+  if (imgh.idx == CBZ_INVALID_HANDLE) {
+    sLogger->error("Attempting to read buffer with invalid handle!");
+    return;
+  }
+
+  sRenderer->textureReadAsync(imgh, origin, extent, callback);
+}
+
+uint32_t Frame() {
+  InputUpdate();
+
   const uint32_t submissionCount = sNextShaderProgramCmdIdx;
 
   if (submissionCount > 0) {
@@ -486,7 +711,8 @@ CBZBool32 Frame() {
               return a.sortKey < b.sortKey;
             });
 
-  sRenderer->submitSorted(sShaderProgramCmds.data(), submissionCount);
+  uint32_t frameIdx = sRenderer->submitSorted(
+      sRenderTargets, sShaderProgramCmds.data(), submissionCount);
 
   // Clear submissions
   for (uint32_t i = 0; i < sNextShaderProgramCmdIdx; i++) {
@@ -497,8 +723,11 @@ CBZBool32 Frame() {
   sNextShaderProgramCmdIdx = 0;
 
   glfwPollEvents();
+  if (glfwWindowShouldClose(sWindow)) {
+    exit(0);
+  };
 
-  return static_cast<CBZBool32>(!glfwWindowShouldClose(sWindow));
+  return frameIdx;
 }
 
 void Shutdown() {

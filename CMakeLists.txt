@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.0...3.25)
 project(cubozoa VERSION 0.1.0 LANGUAGES CXX C)
 
+option(CBZ_BUILD_SHARED "Build shared" ON)
 option(CBZ_BUILD_EXAMPLES "Build examples" OFF)
 
 include(FetchContent)
@@ -37,10 +38,12 @@ add_subdirectory(third_party/imgui)
 add_subdirectory(third_party/glm)
 add_subdirectory(third_party/murmurhash)
 
-add_library(${PROJECT_NAME}
+if(CBZ_BUILD_SHARED)
+	add_library(${PROJECT_NAME} SHARED
             src/core/cubozoa_memory.cpp
 
             src/core/cubozoa_file.cpp
+            src/core/cubozoa_time.cpp
 
             src/math/cubozoa_math.cpp
 
@@ -51,7 +54,29 @@ add_library(${PROJECT_NAME}
             src/net/cubozoa_net_http.cpp
 
             src/cubozoa.cpp)
+else()
+	add_library(${PROJECT_NAME}
+            src/core/cubozoa_memory.cpp
 
+            src/core/cubozoa_file.cpp
+            src/core/cubozoa_time.cpp
+
+            src/math/cubozoa_math.cpp
+
+            src/renderer/cubozoa_irenderer_context.cpp
+            src/renderer/cubozoa_renderer_webgpu.cpp
+
+            src/net/cubozoa_net.cpp
+            src/net/cubozoa_net_http.cpp
+
+            src/cubozoa.cpp)
+endif()
+
+# Set definitions per configuration
+target_compile_definitions(${PROJECT_NAME} PUBLIC
+    $<$<CONFIG:Debug>:CBZ_DEBUG>
+    $<$<CONFIG:Release>:CBZ_RELEASE>
+)
 
 target_link_libraries(${PROJECT_NAME} PUBLIC spdlog glm glfw3webgpu imgui murmurhash)
 
@@ -81,6 +106,7 @@ if (MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE /W4)
 else()
     target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -pedantic)
+    target_link_options(${PROJECT_NAME} PRIVATE -fsanitize=address)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 endif()
 
@@ -92,5 +118,5 @@ if (XCODE)
 endif()
 
 if(CBZ_BUILD_EXAMPLES)
-    add_subdirectory(examples)
+    # add_subdirectory(examples)
 endif()

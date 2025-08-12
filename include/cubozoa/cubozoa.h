@@ -2,6 +2,7 @@
 #define CBZ_H_
 
 #include "cubozoa_defines.h"
+#include <functional>
 
 namespace cbz {
 
@@ -9,7 +10,6 @@ CBZ_API struct InitDesc {
   const char *name;
   uint32_t width;
   uint32_t height;
-
   CBZNetworkStatus netStatus;
 };
 
@@ -24,16 +24,16 @@ CBZ_API void VertexBufferSet(VertexBufferHandle vbh);
 CBZ_API void VertexBufferDestroy(VertexBufferHandle vbh);
 
 [[nodiscard]] CBZ_API IndexBufferHandle
-IndexBufferCreate(CBZIndexFormat format, uint32_t num, const void *data = nullptr,
-                  const char *name = "");
+IndexBufferCreate(CBZIndexFormat format, uint32_t num,
+                  const void *data = nullptr, const char *name = "");
 
 CBZ_API void IndexBufferSet(IndexBufferHandle ibh);
 
 CBZ_API void IndexBufferDestroy(IndexBufferHandle ibh);
 
 [[nodiscard]] CBZ_API StructuredBufferHandle StructuredBufferCreate(
-    CBZUniformType type, uint32_t elementCount, const void *elementData = nullptr,
-    const char *name = "");
+    CBZUniformType type, uint32_t elementCount,
+    const void *elementData = nullptr, int flags = 0, const char *name = "");
 
 void StructuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,
                             const void *data, uint32_t offset = 0);
@@ -52,21 +52,28 @@ CBZ_API void StructuredBufferDestroy(StructuredBufferHandle ibh);
 
 /// @brief Updates a uniform.
 /// @note If buffer and num are 0, the entire uniform range is updated.
-CBZ_API void UniformSet(UniformHandle uh, void *data, uint16_t num = 0);
+CBZ_API void UniformSet(UniformHandle uh, const void *data, uint16_t num = 0);
 
 /// @brief Destroys a uniform.
 CBZ_API void UniformDestroy(UniformHandle uh);
 
-[[nodiscard]] CBZ_API TextureHandle Texture2DCreate(CBZTextureFormat format,
-                                                    uint32_t w, uint32_t h,
-                                                    const char *name = "");
+[[nodiscard]] CBZ_API ImageHandle Image2DCreate(CBZTextureFormat format,
+                                                uint32_t w, uint32_t h,
+                                                int flags = 0);
 
-CBZ_API void Texture2DUpdate(TextureHandle th, void *data, uint32_t count);
+[[nodiscard]] CBZ_API ImageHandle Image2DCubeMapCreate(CBZTextureFormat format,
+                                                       uint32_t w, uint32_t h,
+                                                       uint32_t depth,
+                                                       int flags = 0);
 
-CBZ_API void TextureSet(CBZTextureSlot slot, TextureHandle th,
+CBZ_API void ImageSetName(ImageHandle imgh, const char *name, uint32_t len);
+
+CBZ_API void Image2DUpdate(ImageHandle imgh, void *data, uint32_t count);
+
+CBZ_API void TextureSet(CBZTextureSlot slot, ImageHandle imgh,
                         TextureBindingDesc desc = {});
 
-void TextureDestroy(TextureHandle th);
+void ImageDestroy(ImageHandle imgh);
 
 [[nodiscard]] CBZ_API ShaderHandle ShaderCreate(const char *path,
                                                 int flags = 0);
@@ -88,7 +95,24 @@ ComputeProgramCreate(ShaderHandle sh, const char *name = "");
 
 CBZ_API void ComputeProgramDestroy(ComputeProgramHandle gph);
 
-CBZ_API void TransformSet(float *transform);
+CBZ_API void TransformSet(const float *transform);
+
+CBZ_API void ProjectionSet(const float *projection);
+
+CBZ_API void ViewSet(const float *projection);
+
+void ReadBufferAsync(StructuredBufferHandle sbh,
+                     std::function<void(const void *data)> callback);
+
+// [[deprecated("not really, just incomplete :)")]]
+void TextureReadAsync(ImageHandle imgh, const Origin3D *origin,
+                      const TextureExtent *extent,
+                      std::function<void(const void *data)> callback);
+
+void RenderTargetSet(uint8_t target,
+                     const AttachmentDescription *colorAttachments,
+                     uint32_t colorAttachmentCount,
+                     const AttachmentDescription *depthAttachment = NULL);
 
 /// @brief Submits a graphics program for rendering on the given target.
 ///
@@ -114,7 +138,8 @@ CBZ_API void Submit(uint8_t target, GraphicsProgramHandle gph);
 CBZ_API void Submit(uint8_t target, ComputeProgramHandle cph, uint32_t x,
                     uint32_t y, uint32_t z);
 
-CBZ_API CBZBool32 Frame();
+// @returns the frame number.
+CBZ_API uint32_t Frame();
 
 CBZ_API void Shutdown();
 
@@ -246,10 +271,47 @@ enum class Key {
   eCount,
 };
 
+enum class MouseButton : uint32_t {
+  e1 = 0,
+  e2 = 1,
+  e3 = 2,
+  e4 = 3,
+  e5 = 4,
+  e6 = 5,
+  e7 = 6,
+  e8 = 7,
+  eCount,
+
+  eLast = e8,
+  eLeft = e1,
+  eRight = e2,
+  eMiddle = e3,
+};
+
 // Input functions
 [[nodiscard]] CBZ_API CBZBool32 IsKeyDown(Key key);
+[[nodiscard]] CBZ_API CBZBool32 IsKeyPressed(Key key);
+
+CBZ_API struct MousePosition {
+  uint32_t x, y;
+};
+
+[[nodiscard]] CBZ_API MousePosition GetMousePosition();
+[[nodiscard]] CBZ_API CBZBool32 IsMouseButtonDown(MouseButton mouseButton);
+[[nodiscard]] CBZ_API CBZBool32 IsMouseButtonPressed(MouseButton mouseButton);
 
 }; // namespace cbz
+//
+namespace cbz::input {
+
+enum class Axis {
+  MouseX,
+  MouseY,
+};
+
+[[nodiscard]] double GetAxis(Axis axis);
+
+}; // namespace cbz::input
 
 // TODO: Make C bindings
 // --- C bindings ---

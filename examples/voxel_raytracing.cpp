@@ -28,8 +28,8 @@
 
 #include <cubozoa/cubozoa.h>
 
-#include <memory>
 #include <cstdio>
+#include <memory>
 
 static std::vector<float> sQuadVertices = {
     // x,   y,     z,   normal,           uv
@@ -213,8 +213,8 @@ public:
         sQuadIndices.data());
 
     // Create blit texture
-    mAlbedoTH = cbz::Texture2DCreate(CBZ_TEXTURE_FORMAT_RGBA8UNORM, kWidth,
-                                     kHeight, "blitTexture");
+    mAlbedoTH = cbz::Image2DCreate(CBZ_TEXTURE_FORMAT_RGBA8UNORM, kWidth,
+                                   kHeight, "blitTexture");
 
     // --- Voxel Ray Tracing Setup ---
     // Create raytracing compute program
@@ -236,7 +236,7 @@ public:
 
   ~Cubozoa() {
     // Destroy common resources
-    cbz::TextureDestroy(mAlbedoTH);
+    cbz::ImageDestroy(mAlbedoTH);
 
     // Destroy compute resources
     cbz::ShaderDestroy(mRaytracingSH);
@@ -354,7 +354,7 @@ private:
   cbz::GraphicsProgramHandle mBlitPH;
   cbz::VertexBufferHandle mQuadVBH;
   cbz::IndexBufferHandle mQuadIBH;
-  cbz::TextureHandle mAlbedoTH;
+  cbz::ImageHandle mAlbedoTH;
 
   // Compute resources
   cbz::UniformHandle mRayTracingUH;

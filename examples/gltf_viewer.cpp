@@ -14,7 +14,6 @@
 // - Serves as a reference for structured buffer usage, compute dispatch, and
 // fullscreen blit
 // ======================================================================================
-#include "cubozoa/cubozoa_defines.h"
 #include <cubozoa/cubozoa.h>
 
 #ifdef __EMSCRIPTEN__
@@ -27,9 +26,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-#include <vector>
 #include <array>
 #include <cstdio>
+#include <vector>
 
 static std::vector<float> sQuadVertices = {
     // x,   y,     z,   uv
@@ -95,8 +94,8 @@ public:
         sQuadIndices.data());
 
     // Create blit texture
-    mAlbedoTH = cbz::Texture2DCreate(CBZ_TEXTURE_FORMAT_RGBA8UNORM, kWidth,
-                                     kHeight, "blitTexture");
+    mAlbedoTH =
+        cbz::Image2DCreate(CBZ_TEXTURE_FORMAT_RGBA8UNORM, kWidth, kHeight);
 
     static std::array<ColorRGBA8, kWidth * kHeight> blit = {};
     for (uint32_t y = 0; y < kHeight; y++) {
@@ -107,12 +106,12 @@ public:
       }
     }
 
-    cbz::Texture2DUpdate(mAlbedoTH, blit.data(), kWidth * kHeight);
+    cbz::Image2DUpdate(mAlbedoTH, blit.data(), kWidth * kHeight);
   }
 
   ~GLTFViewer() {
     // Destroy common resources
-    cbz::TextureDestroy(mAlbedoTH);
+    cbz::ImageDestroy(mAlbedoTH);
 
     // Destroy blit resources
     cbz::VertexBufferDestroy(mQuadVBH);
@@ -141,8 +140,8 @@ public:
       glm::mat4 model = glm::mat4(1.0f);
       model = glm::translate(model, glm::vec3(i * 3, 0.0f, -8.0f));
 
-      model = glm::scale(
-          model, glm::vec3(glm::sin((float)mFrameCtr * 0.05 * glm::radians(30.0f))));
+      model = glm::scale(model, glm::vec3(glm::sin((float)mFrameCtr * 0.05 *
+                                                   glm::radians(30.0f))));
 
       glm::mat4 proj =
           glm::perspective(glm::radians(90.0f), 16.0f / 9.0f, 0.1f, 1000.0f);
@@ -154,8 +153,7 @@ public:
       cbz::Submit(0, mBlitPH);
     }
 
-    cbz::Frame();
-    mFrameCtr++;
+    mFrameCtr = cbz::Frame();
   }
 
 private:
@@ -164,7 +162,7 @@ private:
   cbz::GraphicsProgramHandle mBlitPH;
   cbz::VertexBufferHandle mQuadVBH;
   cbz::IndexBufferHandle mQuadIBH;
-  cbz::TextureHandle mAlbedoTH;
+  cbz::ImageHandle mAlbedoTH;
 
   // Application resources
   float mTime;

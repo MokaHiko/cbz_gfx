@@ -2,22 +2,26 @@
 
 #include "cubozoa_renderer_webgpu.h"
 
-#include "GLFW/glfw3.h"
+#include <GLFW/glfw3.h>
 
 #include "core/cubozoa_file.h"
 #include "cubozoa/cubozoa_defines.h"
 #include "cubozoa/net/cubozoa_net_http.h"
 #include "cubozoa_irenderer_context.h"
+#include "imgui.h"
 
+#include <spdlog/spdlog.h>
+
+#include <limits>
 #include <murmurhash/MurmurHash3.h>
 #include <nlohmann/json.hpp>
 
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_wgpu.h>
 
-#include <imgui.h>
-
 #include <fstream>
+#include <string>
+#include <webgpu/webgpu.h>
 
 constexpr static WGPUTextureDimension
 TextureDimToWGPU(CBZTextureDimension dim) {
@@ -58,8 +62,10 @@ static WGPUDevice sDevice;
 static WGPULimits sLimits;
 
 static WGPUQueue sQueue;
+
 static WGPUSurface sSurface;
 static WGPUTextureFormat sSurfaceFormat;
+static cbz::ImageHandle sSurfaceIMGH;
 
 static std::vector<cbz::VertexBufferWebGPU> sVertexBuffers;
 static std::vector<cbz::IndexBufferWebGPU> sIndexBuffers;
@@ -74,6 +80,29 @@ static std::unordered_map<uint32_t, WGPUBindGroup> sBindingGroups;
 
 static std::vector<cbz::GraphicsProgramWebGPU> sGraphicsPrograms;
 static std::vector<cbz::ComputeProgramWebGPU> sComputePrograms;
+
+// --- ImGui ---
+#include "cubozoa/cubozoa_imgui.h"
+static CBZ_ImGuiRenderFunc sImguiRenderfunc = nullptr;
+
+namespace cbz::imgui {
+
+void Image(cbz::ImageHandle imgh, const ImVec2 &size, const ImVec2 &uv0,
+           const ImVec2 &uv1, const ImVec4 &tint_col,
+           const ImVec4 &border_col) {
+  ImGui::Image(
+      sTextures[imgh.idx].findOrCreateTextureView(WGPUTextureAspect_All), size,
+      uv0, uv1, tint_col, border_col);
+}
+
+}; // namespace cbz::imgui
+
+namespace cbz {
+void SetImGuiRenderCallback(CBZ_ImGuiRenderFunc func) {
+  sImguiRenderfunc = func;
+}
+
+}; // namespace cbz
 
 static std::pair<cbz::Result, WGPURequiredLimits>
 CheckAndCreateRequiredLimits(WGPUAdapter adapter) {
@@ -177,11 +206,32 @@ static void OnWorkDone(WGPUQueueWorkDoneStatus status, void *) {
   }
 }
 
+static void AlignedWriteBufferWGPU(WGPUBuffer buffer, const void *data,
+                                   uint32_t size) {
+  // Split write if not aligned
+  uint32_t misalignedSize = size % 4;
+  assert(size > 3);
+
+  if (misalignedSize > 0) {
+    uint32_t allignedSize = size - misalignedSize;
+    wgpuQueueWriteBuffer(sQueue, buffer, 0, data, allignedSize);
+
+    std::array<uint32_t, 4> misalignedData;
+    memcpy(misalignedData.data(),
+           static_cast<const uint8_t *>(data) + allignedSize, misalignedSize);
+    wgpuQueueWriteBuffer(sQueue, buffer, allignedSize, misalignedData.data(),
+                         4);
+  } else {
+    wgpuQueueWriteBuffer(sQueue, buffer, 0, data, size);
+  }
+};
+
 namespace cbz {
 
 class RendererContextWebGPU : public IRendererContext {
 public:
-  Result init(uint32_t width, uint32_t height, void *nwh) override;
+  Result init(uint32_t width, uint32_t height, void *nwh,
+              ImageHandle swapchainIMGH) override;
 
   [[nodiscard]] Result vertexBufferCreate(VertexBufferHandle vbh,
                                           const VertexLayout &vertexLayout,
@@ -200,13 +250,15 @@ public:
                                            CBZUniformType type, uint16_t num,
                                            const void *data = nullptr) override;
 
-  void uniformBufferUpdate(UniformHandle uh, void *data, uint16_t num) override;
+  void uniformBufferUpdate(UniformHandle uh, const void *data,
+                           uint16_t num) override;
 
   void uniformBufferDestroy(UniformHandle uh) override;
 
-  [[nodiscard]] Result
-  structuredBufferCreate(StructuredBufferHandle sbh, CBZUniformType type,
-                         uint32_t num, const void *data = nullptr) override;
+  [[nodiscard]] Result structuredBufferCreate(StructuredBufferHandle sbh,
+                                              CBZUniformType type, uint32_t num,
+                                              const void *data,
+                                              int flags) override;
 
   void structuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,
                               const void *data,
@@ -217,13 +269,14 @@ public:
   [[nodiscard]] SamplerHandle
   getSampler(TextureBindingDesc texBindingDesc) override;
 
-  [[nodiscard]] Result textureCreate(TextureHandle th, CBZTextureFormat format,
-                                     uint32_t x, uint32_t y, uint32_t z,
-                                     CBZTextureDimension dimension) override;
+  [[nodiscard]] Result imageCreate(ImageHandle th, CBZTextureFormat format,
+                                   uint32_t w, uint32_t h, uint32_t depth,
+                                   CBZTextureDimension dimension,
+                                   CBZImageFlags flags) override;
 
-  void textureUpdate(TextureHandle th, void *data, uint32_t count) override;
+  void imageUpdate(ImageHandle th, void *data, uint32_t count) override;
 
-  void textureDestroy(TextureHandle th) override;
+  void imageDestroy(ImageHandle th) override;
 
   [[nodiscard]] Result shaderCreate(ShaderHandle sh, CBZShaderFlags flags,
                                     const std::string &path) override;
@@ -231,7 +284,8 @@ public:
   void shaderDestroy(ShaderHandle sh) override;
 
   [[nodiscard]] Result graphicsProgramCreate(GraphicsProgramHandle gph,
-                                             ShaderHandle sh) override;
+                                             ShaderHandle sh,
+                                             int flags) override;
 
   void graphicsProgramDestroy(GraphicsProgramHandle gph) override;
 
@@ -240,16 +294,222 @@ public:
 
   void computeProgramDestroy(ComputeProgramHandle cph) override;
 
+  void
+  readBufferAsync(StructuredBufferHandle sbh,
+                  std::function<void(const void *data)> callback) override {
+    struct BufferReadRequest {
+      StructuredBufferHandle sbh;
+      uint32_t frameFinished;
+      cbz::Result result;
+      std::function<void(const void *data)> callback;
+    } bufferReadRequest = {};
+
+    bufferReadRequest.callback = callback;
+    bufferReadRequest.sbh = sbh;
+
+    wgpuBufferMapAsync(
+        sStorageBuffers[sbh.idx].mBuffer, WGPUBufferUsage_MapRead, 0,
+        sStorageBuffers[sbh.idx].getSize(),
+        [](WGPUBufferMapAsyncStatus status, void *userdata) {
+          BufferReadRequest *request =
+              static_cast<BufferReadRequest *>(userdata);
+          // request->frameFinished = mFrameCounter;
+
+          switch (status) {
+          case WGPUBufferMapAsyncStatus_Success: {
+            const void *data = wgpuBufferGetConstMappedRange(
+                sStorageBuffers[request->sbh.idx].mBuffer, 0,
+                sStorageBuffers[request->sbh.idx].getSize());
+
+            if (request->callback) {
+              request->callback(data);
+            };
+
+            wgpuBufferUnmap(sStorageBuffers[request->sbh.idx].mBuffer);
+            request->result = Result::eSuccess;
+          } break;
+
+          default: {
+            request->result = Result::eFailure;
+            sLogger->error("Failed to read buffer {:X}!", (int)status);
+          } break;
+          };
+        },
+        &bufferReadRequest);
+  }
+
+  void
+  textureReadAsync(ImageHandle imgh, const Origin3D *origin,
+                   const TextureExtent *extent,
+                   std::function<void(const void *data)> callback) override {
+    const size_t textureSize =
+        sTextures[imgh.idx].getExtent().width *
+        sTextures[imgh.idx].getExtent().height *
+        TextureFormatGetSize(
+            static_cast<CBZTextureFormat>(sTextures[imgh.idx].getFormat()));
+
+    const size_t textureAreaSize =
+        extent->width * extent->height *
+        TextureFormatGetSize(
+            static_cast<CBZTextureFormat>(sTextures[imgh.idx].getFormat()));
+
+    WGPUExtent3D extent3D = {};
+    extent3D.width = extent->width;
+    extent3D.height = extent->height;
+    extent3D.depthOrArrayLayers = extent->layers;
+
+    WGPUOrigin3D origin3D = {};
+    origin3D.x = origin->x;
+    origin3D.y = origin->y;
+    origin3D.z = origin->z;
+
+    WGPUBuffer tempStagingBuffer =
+        getTransientDestinationBuffer(textureAreaSize);
+    copyTextureToBuffer(sTextures[imgh.idx].mTexture, &origin3D,
+                        tempStagingBuffer, &extent3D);
+
+    const size_t textureBufferOffset =
+        (origin->y * sTextures[imgh.idx].getExtent().width + origin->x) *
+        TextureFormatGetSize(
+            static_cast<CBZTextureFormat>(sTextures[imgh.idx].getFormat()));
+
+    if (textureBufferOffset + textureAreaSize > textureSize) {
+      spdlog::warn("Overflow! Attempting to read beyond {}!", textureSize);
+      spdlog::warn("Discarding texture read origin: {} {} {} extent {} {} {}!",
+                   origin->x, origin->y, origin->z, extent->width,
+                   extent->height, extent->layers);
+      return;
+    }
+
+    // TODO: Store/Keep alive in request queue
+    static struct TextureReadRequest {
+      uint32_t frameFinished;
+      WGPUBuffer stagingBuffer;
+      size_t textureSize;
+      std::function<void(const void *data)> callback;
+      cbz::Result result;
+    } textureReadRequest = {};
+
+    textureReadRequest.textureSize = textureAreaSize;
+    textureReadRequest.callback = callback;
+    textureReadRequest.stagingBuffer = tempStagingBuffer;
+
+    wgpuBufferMapAsync(
+        tempStagingBuffer, WGPUBufferUsage_MapRead, textureBufferOffset,
+        textureAreaSize,
+        [](WGPUBufferMapAsyncStatus status, void *userdata) {
+          TextureReadRequest *request =
+              static_cast<TextureReadRequest *>(userdata);
+          // request->frameFinished = mFrameCounter;
+
+          switch (status) {
+          case WGPUBufferMapAsyncStatus_Success: {
+            const void *data = wgpuBufferGetConstMappedRange(
+                request->stagingBuffer, 0, request->textureSize);
+
+            if (request->callback) {
+              request->callback(data);
+            };
+
+            wgpuBufferUnmap(request->stagingBuffer);
+            request->result = Result::eSuccess;
+          } break;
+
+          default: {
+            request->result = Result::eFailure;
+            sLogger->error("Failed to read buffer 0x{:X}!", (int)status);
+          } break;
+          };
+        },
+        &textureReadRequest);
+
+    PollEvents(false);
+  }
+
+  uint32_t submitSorted(const std::vector<RenderTarget> &renderTargets,
+                        const ShaderProgramCommand *sortedCmds,
+                        uint32_t count) override;
+
   void shutdown() override;
 
-  void submitSorted(const ShaderProgramCommand *sortedCmds,
-                    uint32_t count) override;
-
 private:
+  void copyTextureToBuffer(WGPUTexture src, const WGPUOrigin3D *origin,
+                           WGPUBuffer dst, const WGPUExtent3D *extent) {
+    WGPUImageCopyTexture srcTexture = {};
+    srcTexture.nextInChain = nullptr;
+    srcTexture.texture = src;
+    srcTexture.mipLevel = 0;
+    srcTexture.origin = {origin->x, origin->y, origin->z};
+    srcTexture.aspect = WGPUTextureAspect_All;
+
+    const uint32_t textureFormatSize = TextureFormatGetSize(
+        static_cast<CBZTextureFormat>(wgpuTextureGetFormat(src)));
+
+    WGPUImageCopyBuffer dstBuffer = {};
+    dstBuffer.nextInChain = nullptr;
+    dstBuffer.layout = {};
+    dstBuffer.layout.nextInChain = nullptr;
+    dstBuffer.layout.offset = {};
+    dstBuffer.layout.bytesPerRow = extent->width * textureFormatSize;
+    dstBuffer.layout.rowsPerImage = extent->height;
+    dstBuffer.buffer = dst;
+
+    WGPUCommandEncoderDescriptor descriptor = {};
+    WGPUCommandEncoder cmdEncoder =
+        wgpuDeviceCreateCommandEncoder(sDevice, &descriptor);
+    wgpuCommandEncoderCopyTextureToBuffer(cmdEncoder, &srcTexture, &dstBuffer,
+                                          extent);
+
+    WGPUCommandBufferDescriptor cmdDesc = {};
+    cmdDesc.nextInChain = nullptr;
+    std::string commandBufferLabel = "CopyCommandBuffer";
+    cmdDesc.label = commandBufferLabel.c_str();
+    WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(cmdEncoder, &cmdDesc);
+    wgpuCommandEncoderRelease(cmdEncoder);
+
+    wgpuQueueSubmit(sQueue, 1, &cmd);
+    wgpuCommandBufferRelease(cmd);
+  }
+  // TODO: Create multiple staging buffers for different uses.
+  [[nodiscard]] WGPUBuffer getTransientDestinationBuffer(size_t len,
+                                                         void *data = nullptr) {
+    // Create if non. Resize of lesss
+    if (!mStagingBuffer || wgpuBufferGetSize(mStagingBuffer) < len) {
+      if (mStagingBuffer) {
+        wgpuBufferDestroy(mStagingBuffer);
+        mStagingBuffer = nullptr;
+      }
+
+      WGPUBufferDescriptor bufferDesc = {};
+      bufferDesc.nextInChain = nullptr;
+      // bufferDesc.label = name.c_str(); // TODO: Name for use case
+      bufferDesc.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
+      bufferDesc.size = (len + 3) & ~3; // Pad to multiple of 4
+      bufferDesc.mappedAtCreation = false;
+
+      mStagingBuffer = wgpuDeviceCreateBuffer(sDevice, &bufferDesc);
+      if (!mStagingBuffer) {
+        spdlog::error("Failed to create stagingBuffer!");
+        return nullptr;
+      }
+
+      if (data) {
+        AlignedWriteBufferWGPU(mStagingBuffer, data, len);
+      }
+
+      sLogger->trace("Staging buffer resized to {}", len);
+    }
+
+    return mStagingBuffer;
+  }
+
   [[nodiscard]] WGPUBindGroup findOrCreateBindGroup(ShaderHandle sh,
                                                     uint32_t descriptorHash,
                                                     const Binding *bindings,
                                                     uint32_t bindingCount);
+
+  WGPUBuffer mStagingBuffer;
+  uint32_t mFrameCounter;
 };
 
 Result VertexBufferWebGPU::create(const VertexLayout &vertexLayout,
@@ -289,7 +549,7 @@ Result VertexBufferWebGPU::create(const VertexLayout &vertexLayout,
   }
 
   if (data) {
-    wgpuQueueWriteBuffer(sQueue, mBuffer, 0, data, size);
+    AlignedWriteBufferWGPU(mBuffer, data, size);
   }
 
   return Result::eSuccess;
@@ -348,7 +608,7 @@ Result IndexBufferWebGPU::create(WGPUIndexFormat format, uint32_t count,
   }
 
   if (data) {
-    wgpuQueueWriteBuffer(sQueue, mBuffer, 0, data, size);
+    AlignedWriteBufferWGPU(mBuffer, data, size);
   }
 
   return Result::eSuccess;
@@ -404,7 +664,7 @@ void IndexBufferWebGPU::destroy() {
   }
 
   if (data) {
-    wgpuQueueWriteBuffer(sQueue, mBuffer, 0, data, size);
+    AlignedWriteBufferWGPU(mBuffer, data, size);
   }
 
   return Result::eSuccess;
@@ -417,7 +677,7 @@ void UniformBufferWebWGPU::update(const void *data, uint16_t num) {
     size = UniformTypeGetSize(mElementType) * mElementCount;
   }
 
-  wgpuQueueWriteBuffer(sQueue, mBuffer, 0, data, size);
+  AlignedWriteBufferWGPU(mBuffer, data, size);
 }
 
 void UniformBufferWebWGPU::destroy() {
@@ -431,7 +691,9 @@ void UniformBufferWebWGPU::destroy() {
 }
 
 Result StorageBufferWebWGPU::create(CBZUniformType type, uint32_t elementCount,
-                                    const void *data, const std::string &name) {
+                                    const void *data,
+                                    WGPUBufferUsageFlags usage,
+                                    const std::string &name) {
   mElementType = type;
   mElementCount = elementCount;
   uint32_t size = UniformTypeGetSize(mElementType) * mElementCount;
@@ -451,8 +713,9 @@ Result StorageBufferWebWGPU::create(CBZUniformType type, uint32_t elementCount,
   WGPUBufferDescriptor bufferDesc = {};
   bufferDesc.nextInChain = nullptr;
   bufferDesc.label = name.c_str();
+  // TODO : Remove copy dst copy src
   bufferDesc.usage = WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst |
-                     WGPUBufferUsage_CopySrc;
+                     WGPUBufferUsage_CopySrc | usage;
   bufferDesc.size = size;
   bufferDesc.mappedAtCreation = false;
 
@@ -463,7 +726,7 @@ Result StorageBufferWebWGPU::create(CBZUniformType type, uint32_t elementCount,
   }
 
   if (data) {
-    wgpuQueueWriteBuffer(sQueue, mBuffer, 0, data, size);
+    AlignedWriteBufferWGPU(mBuffer, data, size);
   }
 
   return Result::eSuccess;
@@ -487,6 +750,7 @@ void StorageBufferWebWGPU::update(const void *data, uint32_t elementCount,
     return;
   }
 
+  // TODO: Aligned write w offset
   wgpuQueueWriteBuffer(sQueue, mBuffer, offset, data, size);
 }
 
@@ -502,12 +766,14 @@ void StorageBufferWebWGPU::destroy() {
 Result TextureWebGPU::create(uint32_t w, uint32_t h, uint32_t depth,
                              WGPUTextureDimension dimension,
                              WGPUTextureFormat format,
+                             WGPUTextureUsageFlags usage,
                              const std::string &name) {
   WGPUTextureDescriptor textDesc = {};
   textDesc.nextInChain = nullptr;
   textDesc.label = name.c_str();
 
-  textDesc.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
+  textDesc.usage =
+      WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding | usage;
   textDesc.dimension = dimension;
   textDesc.size.width = w;
   textDesc.size.height = h;
@@ -519,7 +785,11 @@ Result TextureWebGPU::create(uint32_t w, uint32_t h, uint32_t depth,
   textDesc.viewFormats = nullptr;
 
   mTexture = wgpuDeviceCreateTexture(sDevice, &textDesc);
+  return Result::eSuccess;
+}
 
+Result TextureWebGPU::create(WGPUTexture texture) {
+  mTexture = texture;
   return Result::eSuccess;
 }
 
@@ -538,7 +808,7 @@ void TextureWebGPU::update(void *data, uint32_t count) {
   WGPUTextureDataLayout dataLayout = {};
   dataLayout.nextInChain = nullptr;
   dataLayout.offset = 0;
-  dataLayout.bytesPerRow = 4 * wgpuTextureGetWidth(mTexture);
+  dataLayout.bytesPerRow = formatSize * wgpuTextureGetWidth(mTexture);
   dataLayout.rowsPerImage = wgpuTextureGetHeight(mTexture);
 
   WGPUExtent3D extent = {};
@@ -573,15 +843,22 @@ TextureWebGPU::findOrCreateTextureView(WGPUTextureAspect aspect) {
   textureView.nextInChain = nullptr;
 
   textureView.format = wgpuTextureGetFormat(mTexture);
-  switch (textureView.format) {
-  case WGPUTextureFormat_RGBA8Unorm:
-    textureView.aspect = WGPUTextureAspect_All;
-    break;
-  case WGPUTextureFormat_Undefined:
-  default:
-    sLogger->error("Unsupported aspect for texture!");
-    break;
-  };
+
+  textureView.aspect = aspect;
+
+  // TODO: Remove
+  // switch (textureView.format) {
+  // case WGPUTextureFormat_RGBA8Unorm: {
+  //   textureView.aspect = WGPUTextureAspect_All;
+  // } break;
+  // case WGPUTextureFormat_Depth32Float: {
+  //   textureView.aspect = WGPUTextureAspect_DepthOnly;
+  // } break;
+  // case WGPUTextureFormat_Undefined:
+  // default:
+  //   sLogger->error("Unsupported aspect for texture!");
+  //   break;
+  // };
 
   switch (wgpuTextureGetDimension(mTexture)) {
   case WGPUTextureDimension_2D:
@@ -603,18 +880,23 @@ TextureWebGPU::findOrCreateTextureView(WGPUTextureAspect aspect) {
   return mViews[textureViewKey] = wgpuTextureCreateView(mTexture, &textureView);
 }
 
+void TextureWebGPU::destroyTextureViews() {
+  for (auto it : mViews) {
+    WGPUTextureView view = it.second;
+    wgpuTextureViewRelease(view);
+  }
+}
+
 void TextureWebGPU::destroy() {
   if (!mTexture) {
     sLogger->warn("Attempting to release uninitialized texture!");
     return;
   }
 
-  for (auto it : mViews) {
-    WGPUTextureView view = it.second;
-    wgpuTextureViewRelease(view);
-  }
+  destroyTextureViews();
 
   wgpuTextureRelease(mTexture);
+  mTexture = NULL;
 }
 
 void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
@@ -639,6 +921,7 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
         if (globalBindingIdx > std::numeric_limits<uint8_t>::max()) {
           sLogger->error("Binding index out of range {}", globalBindingIdx);
         }
+
         mBindingDescs.push_back({});
         mBindingDescs.back().index = static_cast<uint8_t>(globalBindingIdx);
         mBindingDescs.back().name = name;
@@ -682,7 +965,6 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
     if (isNewBinding) {
       mBindingDescs.back().type = BindingType::eUniformBuffer;
     }
-
     sLogger->trace("    - type: {}", scalarType);
     return;
   }
@@ -741,9 +1023,17 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
 
         uint32_t nextOffset = 0;
         if (fieldIdx < elementTypeJson["fields"].size() - 1) {
-          nextOffset =
-              (uint32_t)elementVarLayout["type"]["fields"][fieldIdx + 1]
-                                        ["binding"]["offset"];
+
+          if ((uint32_t)
+                  elementVarLayout["type"]["fields"][fieldIdx + 1]["binding"]
+                      .contains("offset")) {
+            nextOffset =
+                (uint32_t)elementVarLayout["type"]["fields"][fieldIdx + 1]
+                                          ["binding"]["offset"];
+          } else {
+            parseJsonRecursive(elementTypeJson["fields"][fieldIdx],
+                               isNewBinding, offsets);
+          }
         } else {
           nextOffset = (uint32_t)elementVarLayout["binding"]["size"];
         }
@@ -848,6 +1138,16 @@ Result ShaderWebGPU::create(const std::string &path, CBZShaderFlags flags) {
   std::filesystem::path shaderPath = path;
   std::filesystem::path reflectionPath = path;
   reflectionPath.replace_extension(".json");
+
+  if (!std::filesystem::exists(path)) {
+    sLogger->critical("No file in path {}!", path);
+    return Result::eFailure;
+  }
+
+  if (!std::filesystem::exists(reflectionPath)) {
+    sLogger->critical("No file in path {}!", reflectionPath.string());
+    return Result::eFailure;
+  }
 
   std::ifstream reflectionStream(reflectionPath);
   nlohmann::json reflectionJson = nlohmann::json::parse(reflectionStream);
@@ -1041,23 +1341,41 @@ void ShaderWebGPU::destroy() {
   mModule = NULL;
 }
 
-Result GraphicsProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
+Result GraphicsProgramWebGPU::create(ShaderHandle sh, int flags,
+                                     const std::string &name) {
   mShaderHandle = sh;
 
-  const ShaderWebGPU *shader = &sShaders[sh.idx];
+  mFlags = flags;
 
-  WGPURenderPipelineDescriptor pipelineDesc = {};
-  pipelineDesc.nextInChain = nullptr;
-  pipelineDesc.label = name.c_str();
-
-  std::string layoutName = std::string(name) + std::string("_layout");
+  std::string layoutName = std::string(name) + std::string("Layout");
   WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
   pipelineLayoutDesc.nextInChain = nullptr;
   pipelineLayoutDesc.label = layoutName.c_str();
   pipelineLayoutDesc.bindGroupLayoutCount = 1;
-  pipelineLayoutDesc.bindGroupLayouts = &shader->getBindGroupLayout();
+  pipelineLayoutDesc.bindGroupLayouts =
+      &sShaders[mShaderHandle.idx].getBindGroupLayout();
   mPipelineLayout =
       wgpuDeviceCreatePipelineLayout(sDevice, &pipelineLayoutDesc);
+
+  return Result::eSuccess;
+}
+
+WGPURenderPipeline
+GraphicsProgramWebGPU::findOrCreatePipeline(const RenderTarget &target) {
+  uint32_t pipelineId;
+  MurmurHash3_x86_32(target.colorAttachments.data(),
+                     target.colorAttachments.size(),
+                     (uint32_t)(target.depthAttachment.imgh.idx), &pipelineId);
+
+  if (auto it = mPipelines.find(pipelineId); it != mPipelines.end()) {
+    return it->second;
+  }
+
+  const ShaderWebGPU *shader = &sShaders[mShaderHandle.idx];
+
+  WGPURenderPipelineDescriptor pipelineDesc = {};
+  pipelineDesc.nextInChain = nullptr;
+  // pipelineDesc.label = name.c_str();
   pipelineDesc.layout = mPipelineLayout;
 
   WGPUVertexBufferLayout vertexBufferLayout = {};
@@ -1084,14 +1402,57 @@ Result GraphicsProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
   primitiveState.nextInChain = nullptr;
   primitiveState.topology = WGPUPrimitiveTopology_TriangleList;
   primitiveState.stripIndexFormat = WGPUIndexFormat_Undefined;
-  primitiveState.frontFace = WGPUFrontFace_CW;
-  // primitiveState.cullMode = WGPUCullMode_Back;
+
+  primitiveState.frontFace = WGPUFrontFace_CCW;
+  if ((mFlags & CBZ_GRAPHICS_PROGRAM_FRONT_FACE_CW) ==
+      CBZ_GRAPHICS_PROGRAM_FRONT_FACE_CW) {
+    primitiveState.frontFace = WGPUFrontFace_CW;
+  }
+
   primitiveState.cullMode = WGPUCullMode_None;
+  if ((mFlags & CBZ_GRAPHICS_PROGRAM_CULL_BACK) ==
+      CBZ_GRAPHICS_PROGRAM_CULL_BACK) {
+    primitiveState.cullMode = WGPUCullMode_Back;
+  }
+
+  if ((mFlags & CBZ_GRAPHICS_PROGRAM_CULL_FRONT) ==
+      CBZ_GRAPHICS_PROGRAM_CULL_FRONT) {
+    primitiveState.cullMode = WGPUCullMode_Front;
+  }
+
   pipelineDesc.primitive = primitiveState;
 
-  pipelineDesc.depthStencil = nullptr;
+  WGPUDepthStencilState depthStencilState = {};
+  if (target.depthAttachment.imgh.idx != CBZ_INVALID_HANDLE) {
+    const TextureWebGPU &depthTexture =
+        sTextures[target.depthAttachment.imgh.idx];
+    depthStencilState.nextInChain = nullptr;
+    depthStencilState.format = depthTexture.getFormat();
+    depthStencilState.depthWriteEnabled = true;
+    depthStencilState.depthCompare = WGPUCompareFunction_LessEqual;
 
-  WGPUMultisampleState multiSampleState;
+    depthStencilState.stencilReadMask = 0xFFFFFFFF;
+    depthStencilState.stencilWriteMask = 0xFFFFFFFF;
+    depthStencilState.depthBias = 0;
+    depthStencilState.depthBiasSlopeScale = 0;
+    depthStencilState.depthBiasClamp = 0;
+
+    depthStencilState.stencilFront.compare = WGPUCompareFunction_Always;
+    depthStencilState.stencilFront.failOp = WGPUStencilOperation_Keep;
+    depthStencilState.stencilFront.depthFailOp = WGPUStencilOperation_Keep;
+    depthStencilState.stencilFront.passOp = WGPUStencilOperation_Keep;
+
+    depthStencilState.stencilBack.compare = WGPUCompareFunction_Always;
+    depthStencilState.stencilBack.failOp = WGPUStencilOperation_Keep;
+    depthStencilState.stencilBack.depthFailOp = WGPUStencilOperation_Keep;
+    depthStencilState.stencilBack.passOp = WGPUStencilOperation_Keep;
+
+    pipelineDesc.depthStencil = &depthStencilState;
+  } else {
+    pipelineDesc.depthStencil = nullptr;
+  }
+
+  WGPUMultisampleState multiSampleState = {};
   multiSampleState.nextInChain = nullptr;
   multiSampleState.count = 1;
   multiSampleState.mask = ~0u;
@@ -1105,17 +1466,31 @@ Result GraphicsProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
       WGPUBlendFactor_SrcAlpha,         // srcFactor
       WGPUBlendFactor_OneMinusSrcAlpha, // dstFactor
   };
+
   blendState.alpha = {
       WGPUBlendOperation_Add,
       WGPUBlendFactor_Zero, // srcFactor
       WGPUBlendFactor_One,  // dstFactor
   };
 
-  WGPUColorTargetState targetState;
-  targetState.nextInChain = nullptr;
-  targetState.format = sSurfaceFormat;
-  targetState.blend = &blendState;
-  targetState.writeMask = WGPUColorWriteMask_All;
+  std::vector<WGPUColorTargetState> colorTargets(
+      target.colorAttachments.size());
+
+  for (size_t colorTargetIdx = 0; colorTargetIdx < colorTargets.size();
+       colorTargetIdx++) {
+    colorTargets[colorTargetIdx].nextInChain = nullptr;
+    colorTargets[colorTargetIdx].format =
+        sTextures[target.colorAttachments[colorTargetIdx].imgh.idx].getFormat();
+
+    if ((target.colorAttachments[colorTargetIdx].flags &
+         CBZ_RENDER_ATTACHMENT_BLEND) == CBZ_RENDER_ATTACHMENT_BLEND) {
+      colorTargets[colorTargetIdx].blend = &blendState;
+    } else {
+      colorTargets[colorTargetIdx].blend = NULL;
+    }
+
+    colorTargets[colorTargetIdx].writeMask = WGPUColorWriteMask_All;
+  }
 
   WGPUFragmentState fragmentState = {};
   fragmentState.nextInChain = nullptr;
@@ -1125,22 +1500,16 @@ Result GraphicsProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
     fragmentState.constantCount = 0;
     fragmentState.constants = nullptr;
 
-    fragmentState.targetCount = 1;
-    fragmentState.targets = &targetState;
+    fragmentState.targetCount = colorTargets.size();
+    fragmentState.targets = colorTargets.data();
     fragmentState.module = shader->getModule();
     pipelineDesc.fragment = &fragmentState;
   } else {
     pipelineDesc.fragment = nullptr;
   }
 
-  mPipeline = wgpuDeviceCreateRenderPipeline(sDevice, &pipelineDesc);
-  return Result::eSuccess;
-}
-
-Result
-GraphicsProgramWebGPU::bind(WGPURenderPassEncoder renderPassEncoder) const {
-  wgpuRenderPassEncoderSetPipeline(renderPassEncoder, mPipeline);
-  return Result::eSuccess;
+  return mPipelines[pipelineId] = mPipeline =
+             wgpuDeviceCreateRenderPipeline(sDevice, &pipelineDesc);
 }
 
 void GraphicsProgramWebGPU::destroy() {
@@ -1204,10 +1573,12 @@ void ComputeProgramWebGPU::destroy() {
   mPipeline = NULL;
 }
 
-Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
+Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh,
+                                   ImageHandle swapchainIMGH) {
   sLogger = spdlog::stdout_color_mt("cbzrenderer");
-  sLogger->set_level(spdlog::level::trace);
   sLogger->set_pattern("[%^%l%$] IRenderer: %v");
+
+  mFrameCounter = 0;
 
   // net::Endpoint cbzEndPoint = {
   //     net::Address("192.168.1.4"),
@@ -1237,9 +1608,9 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   adaptorOpts.compatibleSurface = sSurface;
   adaptorOpts.powerPreference = WGPUPowerPreference_Undefined;
   adaptorOpts.backendType = WGPUBackendType_Undefined;
-#ifdef WEBGPU_BACKEND_WGPU
-  adaptorOpts.backendType = WGPUBackendType_Vulkan;
-#endif
+  // #ifdef WEBGPU_BACKEND_WGPU
+  //   adaptorOpts.backendType = WGPUBackendType_Vulkan;
+  // #endif
   adaptorOpts.forceFallbackAdapter = 0x00000000;
 
   struct AdapterRequest {
@@ -1367,8 +1738,11 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   sQueue = wgpuDeviceGetQueue(sDevice);
   wgpuQueueOnSubmittedWorkDone(sQueue, OnWorkDone, nullptr);
 
-  sSurfaceFormat = WGPUTextureFormat_BGRA8Unorm;
+  sSurfaceFormat = WGPUTextureFormat_BGRA8UnormSrgb;
   wgpuAdapterRelease(adapter);
+
+  int fbWidth, fbHeight;
+  glfwGetFramebufferSize(static_cast<GLFWwindow *>(nwh), &fbWidth, &fbHeight);
 
   WGPUSurfaceConfiguration surfaceConfig = {};
   surfaceConfig.nextInChain = nullptr;
@@ -1381,13 +1755,21 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   surfaceConfig.alphaMode = WGPUCompositeAlphaMode_Auto;
   surfaceConfig.width = width;
   surfaceConfig.height = height;
+  surfaceConfig.width = fbWidth;
+  surfaceConfig.height = fbHeight;
   surfaceConfig.presentMode = WGPUPresentMode_Fifo;
   wgpuSurfaceConfigure(sSurface, &surfaceConfig);
+
+  // Reserve for current swapchain image
+  sTextures.resize(swapchainIMGH.idx + 1u);
+  sSurfaceIMGH = swapchainIMGH;
 
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
-  ImGui::GetIO();
+
+  ImGuiStyle &style = ImGui::GetStyle();
+  style.ScaleAllSizes(2.0f);
 
   // Setup Platform/Renderer backends
   ImGui_ImplGlfw_InitForOther(static_cast<GLFWwindow *>(nwh), true);
@@ -1397,9 +1779,10 @@ Result RendererContextWebGPU::init(uint32_t width, uint32_t height, void *nwh) {
   return Result::eSuccess;
 }
 
-uint32_t frameCounter = 0;
-void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
-                                         uint32_t count) {
+uint32_t RendererContextWebGPU::submitSorted(
+    const std::vector<RenderTarget> &renderTargets,
+    const ShaderProgramCommand *sortedCmds, uint32_t count) {
+
   WGPUSurfaceTexture surfaceTexture;
   wgpuSurfaceGetCurrentTexture(sSurface, &surfaceTexture);
   switch (surfaceTexture.status) {
@@ -1413,21 +1796,18 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
   case WGPUSurfaceGetCurrentTextureStatus_DeviceLost:
   case WGPUSurfaceGetCurrentTextureStatus_Force32:
     sLogger->error("Failed to get surface texture!");
-    return;
+    return mFrameCounter;
   }
 
-  WGPUTextureViewDescriptor surfaceTextureViewDesc{};
-  surfaceTextureViewDesc.nextInChain = NULL;
-  surfaceTextureViewDesc.label = "surfaceTextureViewX";
-  surfaceTextureViewDesc.format = wgpuTextureGetFormat(surfaceTexture.texture);
-  surfaceTextureViewDesc.dimension = WGPUTextureViewDimension_2D;
-  surfaceTextureViewDesc.baseMipLevel = 0;
-  surfaceTextureViewDesc.mipLevelCount = 1;
-  surfaceTextureViewDesc.baseArrayLayer = 0;
-  surfaceTextureViewDesc.arrayLayerCount = 1;
-  surfaceTextureViewDesc.aspect = WGPUTextureAspect_All;
-  WGPUTextureView surfaceTextureView =
-      wgpuTextureCreateView(surfaceTexture.texture, &surfaceTextureViewDesc);
+  // Re assign surface texture handle
+  // TODO: Fix. findOrCreateTextureView is cached by image id, but each surface
+  // texture shares the same id. Most likely have to Create abstraction for
+  // swapchain.
+  sTextures[sSurfaceIMGH.idx] = {};
+  sTextures[sSurfaceIMGH.idx].create(surfaceTexture.texture);
+  WGPUTextureView swapchainTextureView =
+      sTextures[sSurfaceIMGH.idx].findOrCreateTextureView(
+          WGPUTextureAspect_All);
 
   WGPUCommandEncoderDescriptor cmdEncoderDesc = {};
   cmdEncoderDesc.nextInChain = nullptr;
@@ -1437,39 +1817,31 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
       wgpuDeviceCreateCommandEncoder(sDevice, &cmdEncoderDesc);
 
   // Target struct
-  uint8_t target = std::numeric_limits<uint8_t>::max();
+  uint8_t target = CBZ_INVALID_RENDER_TARGET;
   CBZTargetType targetType = CBZ_TARGET_TYPE_NONE;
-  // Attachments if graphics
-  // WGPURenderPassEncoder renderPassEncoder = nullptr;
-  // WGPUComputePassEncoder computePassEncoder = nullptr;
 
   uint64_t targetSortKey = std::numeric_limits<uint64_t>::max();
 
-  uint32_t vertexCount = 0;
-  uint32_t indexCount = 0;
-  bool isIndexed = false;
-  WGPURenderPassEncoder renderPassEncoder = nullptr;
-
+  // Compute state
   uint32_t dispatchX = 0;
   uint32_t dispatchY = 0;
   uint32_t dispatchZ = 0;
   WGPUComputePassEncoder computePassEncoder = nullptr;
 
+  // Graphics state
+  uint32_t vertexCount = 0;
+  uint32_t indexCount = 0;
+  bool isIndexed = false;
+  WGPURenderPassEncoder renderPassEncoder = nullptr;
+
   for (uint32_t cmdIdx = 0; cmdIdx < count; cmdIdx++) {
     const ShaderProgramCommand &renderCmd = sortedCmds[cmdIdx];
 
-    // Begin target encoder
+    // Switch targets
     if (target != renderCmd.target) {
 
       // End previous pass
       switch (targetType) {
-      case CBZ_TARGET_TYPE_GRAPHICS: {
-        if (renderPassEncoder != NULL) {
-          wgpuRenderPassEncoderEnd(renderPassEncoder);
-          wgpuRenderPassEncoderRelease(renderPassEncoder);
-        }
-      } break;
-
       case CBZ_TARGET_TYPE_COMPUTE: {
         if (computePassEncoder != NULL) {
           wgpuComputePassEncoderEnd(computePassEncoder);
@@ -1477,18 +1849,30 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
         }
       } break;
 
+      case CBZ_TARGET_TYPE_GRAPHICS: {
+        if (renderPassEncoder != NULL) {
+          wgpuRenderPassEncoderEnd(renderPassEncoder);
+          wgpuRenderPassEncoderRelease(renderPassEncoder);
+        }
+      } break;
+
       case CBZ_TARGET_TYPE_NONE: {
       } break;
       }
 
+      // Assign new current target
       target = renderCmd.target;
       targetType = renderCmd.programType;
-      switch (renderCmd.programType) {
 
+      // Begin pass
+      switch (renderCmd.programType) {
       case CBZ_TARGET_TYPE_COMPUTE: {
         WGPUComputePassDescriptor computePassDesc = {};
         computePassDesc.nextInChain = nullptr;
-        computePassDesc.label = "computePassX";
+
+        static std::string computePassLabel;
+        computePassLabel = "ComputePass" + std::to_string(renderCmd.target);
+        computePassDesc.label = computePassLabel.c_str();
         computePassDesc.timestampWrites = nullptr;
 
         computePassEncoder =
@@ -1496,29 +1880,93 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
       } break;
 
       case CBZ_TARGET_TYPE_GRAPHICS: {
-        WGPURenderPassColorAttachment renderPassColorAttachmentDesc = {};
-        renderPassColorAttachmentDesc.nextInChain = nullptr;
-        renderPassColorAttachmentDesc.view = surfaceTextureView;
-        // renderPassColorAttachmentDesc.resolveTarget ;
-        renderPassColorAttachmentDesc.loadOp = WGPULoadOp_Clear;
-        renderPassColorAttachmentDesc.storeOp = WGPUStoreOp_Store;
-        renderPassColorAttachmentDesc.clearValue = {0.0f, 0.0f, 0.0f, 1.0f};
+        if (renderCmd.target != CBZ_DEFAULT_RENDER_TARGET) {
+          const RenderTarget &renderTarget = renderTargets[renderCmd.target];
+
+          static std::array<WGPURenderPassColorAttachment,
+                            MAX_TARGET_COLOR_ATTACHMENTS>
+              colorAttachments;
+
+          for (size_t colorAttachmentIdx = 0;
+               colorAttachmentIdx <
+               renderTargets[renderCmd.target].colorAttachments.size();
+               colorAttachmentIdx++) {
+
+            colorAttachments[colorAttachmentIdx].nextInChain = nullptr;
+            colorAttachments[colorAttachmentIdx].view =
+                sTextures[renderTarget.colorAttachments[colorAttachmentIdx]
+                              .imgh.idx]
+                    .findOrCreateTextureView(WGPUTextureAspect_All);
+
+            colorAttachments[colorAttachmentIdx].loadOp = WGPULoadOp_Clear;
+            colorAttachments[colorAttachmentIdx].storeOp = WGPUStoreOp_Store;
+            colorAttachments[colorAttachmentIdx].clearValue = {0.0f, 0.0f, 0.0f,
+                                                               1.0f};
+          }
+
+          WGPURenderPassDepthStencilAttachment depthStencilAttachment = {};
+          if (renderTarget.depthAttachment.imgh.idx != CBZ_INVALID_HANDLE) {
+            depthStencilAttachment.view =
+                sTextures[renderTarget.depthAttachment.imgh.idx]
+                    .findOrCreateTextureView(WGPUTextureAspect_DepthOnly);
+            depthStencilAttachment.depthLoadOp = WGPULoadOp_Clear;
+            depthStencilAttachment.depthStoreOp = WGPUStoreOp_Store;
+            depthStencilAttachment.depthClearValue = 1.0f;
+            depthStencilAttachment.depthReadOnly = false;
+
+            depthStencilAttachment.stencilClearValue = 0;
+            depthStencilAttachment.stencilLoadOp = WGPULoadOp_Clear;
+            depthStencilAttachment.stencilStoreOp = WGPUStoreOp_Store;
+            depthStencilAttachment.stencilReadOnly = true;
+          }
 
 #ifndef WEBGPU_BACKEND_WGPU
-        renderPassColorAttachmentDesc.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+          renderPassColorAttachmentDesc.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
 #endif // NOT WEBGPU_BACKEND_WGPU
 
-        WGPURenderPassDescriptor renderPassDesc = {};
-        renderPassDesc.nextInChain = nullptr;
-        renderPassDesc.label = "RenderPassDescX";
-        renderPassDesc.colorAttachmentCount = 1;
-        renderPassDesc.colorAttachments = &renderPassColorAttachmentDesc;
-        renderPassDesc.depthStencilAttachment = nullptr;
-        renderPassDesc.occlusionQuerySet = nullptr;
-        renderPassDesc.timestampWrites = nullptr;
+          WGPURenderPassDescriptor renderPassDesc = {};
+          renderPassDesc.nextInChain = nullptr;
 
-        renderPassEncoder =
-            wgpuCommandEncoderBeginRenderPass(cmdEncoder, &renderPassDesc);
+          static std::string renderPassLabel;
+          renderPassLabel = "RenderPass" + std::to_string(renderCmd.target);
+          renderPassDesc.label = renderPassLabel.c_str();
+          renderPassDesc.colorAttachmentCount =
+              renderTarget.colorAttachments.size();
+          renderPassDesc.colorAttachments = colorAttachments.data();
+          renderPassDesc.depthStencilAttachment =
+              renderTarget.depthAttachment.imgh.idx != CBZ_INVALID_HANDLE
+                  ? &depthStencilAttachment
+                  : nullptr;
+          renderPassDesc.occlusionQuerySet = nullptr;
+          renderPassDesc.timestampWrites = nullptr;
+
+          renderPassEncoder =
+              wgpuCommandEncoderBeginRenderPass(cmdEncoder, &renderPassDesc);
+        } else { // Render to swapchain; target is 'CBZ_DEFAULT_RENDER_TARGET'
+          WGPURenderPassColorAttachment renderPassColorAttachmentDesc = {};
+          renderPassColorAttachmentDesc.nextInChain = nullptr;
+          renderPassColorAttachmentDesc.view = swapchainTextureView;
+          // renderPassColorAttachmentDesc.resolveTarget ;
+          renderPassColorAttachmentDesc.loadOp = WGPULoadOp_Clear;
+          renderPassColorAttachmentDesc.storeOp = WGPUStoreOp_Store;
+          renderPassColorAttachmentDesc.clearValue = {0.0f, 0.0f, 0.0f, 1.0f};
+
+#ifndef WEBGPU_BACKEND_WGPU
+          renderPassColorAttachmentDesc.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+#endif // NOT WEBGPU_BACKEND_WGPU
+
+          WGPURenderPassDescriptor renderPassDesc = {};
+          renderPassDesc.nextInChain = nullptr;
+          renderPassDesc.label = "SwapchainRenderpass";
+          renderPassDesc.colorAttachmentCount = 1;
+          renderPassDesc.colorAttachments = &renderPassColorAttachmentDesc;
+          renderPassDesc.depthStencilAttachment = nullptr;
+          renderPassDesc.occlusionQuerySet = nullptr;
+          renderPassDesc.timestampWrites = nullptr;
+
+          renderPassEncoder =
+              wgpuCommandEncoderBeginRenderPass(cmdEncoder, &renderPassDesc);
+        }
       }
 
       case CBZ_TARGET_TYPE_NONE: {
@@ -1528,7 +1976,6 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
 
     // Execute cmds
     switch (targetType) {
-
     case CBZ_TARGET_TYPE_COMPUTE: {
       if (targetSortKey != renderCmd.sortKey) {
         targetSortKey = renderCmd.sortKey;
@@ -1564,7 +2011,7 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
       if (targetSortKey != renderCmd.sortKey) {
         targetSortKey = renderCmd.sortKey;
 
-        const GraphicsProgramWebGPU &graphicsProgram =
+        GraphicsProgramWebGPU &graphicsProgram =
             sGraphicsPrograms[renderCmd.program.graphics.ph.idx];
 
         const VertexBufferWebGPU &vb =
@@ -1579,9 +2026,27 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
           continue;
         }
 
-        if (graphicsProgram.bind(renderPassEncoder) != Result::eSuccess) {
+        WGPURenderPipeline renderPipeline = nullptr;
+        if (renderCmd.target != CBZ_DEFAULT_RENDER_TARGET) {
+          renderPipeline = graphicsProgram.findOrCreatePipeline(
+              renderTargets[renderCmd.target]);
+        } else {
+          // Surface render target
+          static RenderTarget sSurfaceRenderTarget{};
+          sSurfaceRenderTarget.colorAttachments.resize(1);
+          sSurfaceRenderTarget.colorAttachments[0].imgh = sSurfaceIMGH;
+
+          renderPipeline =
+              graphicsProgram.findOrCreatePipeline(sSurfaceRenderTarget);
+        }
+
+        if (!renderPipeline) {
+          sLogger->error("Failed to create render pipeline !");
+          sLogger->error("Discarding draw...");
           continue;
         }
+
+        wgpuRenderPassEncoderSetPipeline(renderPassEncoder, renderPipeline);
 
         const WGPUBindGroup graphicsBindGroup = findOrCreateBindGroup(
             graphicsProgram.getShader(), renderCmd.getDescriptorHash(),
@@ -1635,18 +2100,20 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
   switch (targetType) {
   case CBZ_TARGET_TYPE_GRAPHICS: {
     if (renderPassEncoder != NULL) {
-      // TODO: Guarantee swapchain is last render target
-      ImGui_ImplWGPU_NewFrame();
-      ImGui_ImplGlfw_NewFrame();
-      ImGui::NewFrame();
+      if (target == CBZ_DEFAULT_RENDER_TARGET) {
+        ImGui_ImplWGPU_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
 
-      ImGui::Begin("Pipeline state");
-      ImGui::Text("fps: %3.0f", ImGui::GetIO().Framerate);
-      ImGui::End();
+        // User defined imgui render
+        if (sImguiRenderfunc) {
+          sImguiRenderfunc();
+        }
 
-      ImGui::EndFrame();
-      ImGui::Render();
-      ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), renderPassEncoder);
+        ImGui::EndFrame();
+        ImGui::Render();
+        ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), renderPassEncoder);
+      }
 
       wgpuRenderPassEncoderEnd(renderPassEncoder);
       wgpuRenderPassEncoderRelease(renderPassEncoder);
@@ -1666,9 +2133,34 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
     break;
   }
 
+  // // TODO: Copy texture to texture
+  // WGPUImageCopyTexture srcTexture = {};
+  // srcTexture.nextInChain = nullptr;
+  // srcTexture.texture = *(WGPUTexture *)(&sTextures[1]);
+  // srcTexture.mipLevel = 0;
+  // srcTexture.origin = {0, 0, 0};
+  // srcTexture.aspect = WGPUTextureAspect_All;
+  //
+  // WGPUImageCopyTexture dstTexture = {};
+  // dstTexture.nextInChain = nullptr;
+  // dstTexture.texture = *(WGPUTexture *)(&sTextures[0]);
+  // dstTexture.mipLevel = 0;
+  // dstTexture.origin = {0, 0, 0};
+  // dstTexture.aspect = WGPUTextureAspect_All;
+  //
+  // WGPUExtent3D copyExtent = sTextures[1].getExtent();
+  // // copyExtent.width = ;
+  // // copyExtent.height;
+  // // copyExtent.depthOrArrayLayers;
+  // wgpuCommandEncoderCopyTextureToTexture(cmdEncoder, &srcTexture,
+  // &dstTexture,
+  //                                        &copyExtent);
+  //
   WGPUCommandBufferDescriptor cmdDesc = {};
   cmdDesc.nextInChain = nullptr;
-  cmdDesc.label = "CommandBufferX";
+  std::string commandBufferLabel =
+      "CommandBuffer" + std::to_string(mFrameCounter);
+  cmdDesc.label = commandBufferLabel.c_str();
 
   WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(cmdEncoder, &cmdDesc);
   wgpuCommandEncoderRelease(cmdEncoder);
@@ -1681,10 +2173,10 @@ void RendererContextWebGPU::submitSorted(const ShaderProgramCommand *sortedCmds,
 #endif
 
   wgpuTextureRelease(surfaceTexture.texture);
-  wgpuTextureViewRelease(surfaceTextureView);
+  wgpuTextureViewRelease(swapchainTextureView);
 
   PollEvents(false);
-  frameCounter++;
+  return mFrameCounter++;
 }
 
 Result
@@ -1730,7 +2222,8 @@ Result RendererContextWebGPU::uniformBufferCreate(UniformHandle uh,
       type, num, data, HandleProvider<UniformHandle>::getName(uh));
 }
 
-void RendererContextWebGPU::uniformBufferUpdate(UniformHandle uh, void *data,
+void RendererContextWebGPU::uniformBufferUpdate(UniformHandle uh,
+                                                const void *data,
                                                 uint16_t num) {
   sUniformBuffers[uh.idx].update(data, num);
 }
@@ -1742,13 +2235,24 @@ void RendererContextWebGPU::uniformBufferDestroy(UniformHandle uh) {
 Result RendererContextWebGPU::structuredBufferCreate(StructuredBufferHandle sbh,
                                                      CBZUniformType type,
                                                      uint32_t elementCount,
-                                                     const void *elementData) {
+                                                     const void *elementData,
+                                                     int flags) {
   if (sStorageBuffers.size() < static_cast<uint64_t>(sbh.idx + 1u)) {
     sStorageBuffers.resize(static_cast<uint64_t>(sbh.idx + 1u));
   }
 
+  WGPUBufferUsageFlags usageFlags = 0;
+
+  if ((CBZ_BUFFER_COPY_SRC & flags) == CBZ_BUFFER_COPY_SRC) {
+    usageFlags |= WGPUBufferUsage_CopySrc;
+  }
+
+  if ((CBZ_BUFFER_COPY_DST & flags) == CBZ_BUFFER_COPY_DST) {
+    usageFlags |= WGPUBufferUsage_CopyDst;
+  }
+
   return sStorageBuffers[sbh.idx].create(
-      type, elementCount, elementData,
+      type, elementCount, elementData, usageFlags,
       HandleProvider<StructuredBufferHandle>::getName(sbh));
 };
 
@@ -1797,24 +2301,40 @@ RendererContextWebGPU::getSampler(TextureBindingDesc texBindingDesc) {
   return SamplerHandle{samplerID};
 };
 
-Result RendererContextWebGPU::textureCreate(TextureHandle th,
-                                            CBZTextureFormat format, uint32_t w,
-                                            uint32_t h, uint32_t depth,
-                                            CBZTextureDimension dimension) {
+Result RendererContextWebGPU::imageCreate(ImageHandle th,
+                                          CBZTextureFormat format, uint32_t w,
+                                          uint32_t h, uint32_t depth,
+                                          CBZTextureDimension dimension,
+                                          CBZImageFlags flags) {
   if (sTextures.size() < th.idx + 1u) {
     sTextures.resize(th.idx + 1u);
   }
 
+  WGPUTextureUsageFlags wgpuUsageFlags = 0;
+
+  if ((flags & CBZ_IMAGE_RENDER_ATTACHMENT) == CBZ_IMAGE_RENDER_ATTACHMENT) {
+    wgpuUsageFlags |= WGPUTextureUsage_RenderAttachment;
+  }
+
+  if ((flags & CBZ_IMAGE_BINDING) == CBZ_IMAGE_BINDING) {
+    wgpuUsageFlags |= WGPUTextureUsage_TextureBinding;
+  }
+
+  if ((flags & CBZ_IMAGE_COPY_SRC) == CBZ_IMAGE_COPY_SRC) {
+    wgpuUsageFlags |= WGPUTextureUsage_CopySrc;
+  }
+
   return sTextures[th.idx].create(w, h, depth, TextureDimToWGPU(dimension),
-                                  static_cast<WGPUTextureFormat>(format));
+                                  static_cast<WGPUTextureFormat>(format),
+                                  wgpuUsageFlags);
 }
 
-void RendererContextWebGPU::textureUpdate(TextureHandle th, void *data,
-                                          uint32_t count) {
+void RendererContextWebGPU::imageUpdate(ImageHandle th, void *data,
+                                        uint32_t count) {
   sTextures[th.idx].update(data, count);
 };
 
-void RendererContextWebGPU::textureDestroy(TextureHandle th) {
+void RendererContextWebGPU::imageDestroy(ImageHandle th) {
   return sTextures[th.idx].destroy();
 };
 
@@ -1833,13 +2353,14 @@ void RendererContextWebGPU::shaderDestroy(ShaderHandle sh) {
 }
 
 Result RendererContextWebGPU::graphicsProgramCreate(GraphicsProgramHandle gph,
-                                                    ShaderHandle sh) {
+                                                    ShaderHandle sh,
+                                                    int flags) {
   if (sGraphicsPrograms.size() < gph.idx + 1u) {
     sGraphicsPrograms.resize(gph.idx + 1u);
   }
 
   return sGraphicsPrograms[gph.idx].create(
-      sh, HandleProvider<GraphicsProgramHandle>::getName(gph));
+      sh, flags, HandleProvider<GraphicsProgramHandle>::getName(gph));
 }
 
 void RendererContextWebGPU::graphicsProgramDestroy(GraphicsProgramHandle gph) {
@@ -1860,6 +2381,10 @@ void RendererContextWebGPU::computeProgramDestroy(ComputeProgramHandle cph) {
 }
 
 void RendererContextWebGPU::shutdown() {
+  if (mStagingBuffer) {
+    wgpuBufferDestroy(mStagingBuffer);
+  }
+
   ImGui_ImplGlfw_Shutdown();
   ImGui_ImplWGPU_Shutdown();
 
@@ -1917,7 +2442,7 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
 
         if (it->elementSize + it->padding < sUniformBuffers[uh.idx].getSize()) {
           sLogger->warn("Uniform '{}' size larger than (< {} bytes); requires "
-                        "{}. Consider Decreasing elementCount.",
+                        "{}. Mismatch or unused in shader binding!",
                         HandleProvider<UniformHandle>::getName(uh),
                         sUniformBuffers[uh.idx].getSize(), it->elementSize);
         }
@@ -1959,7 +2484,7 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
       } break;
 
       case BindingType::eTexture2D: {
-        TextureHandle th = bindings[i].value.texture.handle;
+        ImageHandle th = bindings[i].value.texture.handle;
 
         const auto &it = std::find_if(
             shaderBindingDescs.begin(), shaderBindingDescs.end(),
@@ -1970,7 +2495,7 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
         if (it->type != BindingType::eTexture2D) {
           sLogger->error(
               "Bound program has uniform binding and type mismatch for '{}'",
-              HandleProvider<TextureHandle>::getName(th));
+              HandleProvider<ImageHandle>::getName(th));
           return nullptr;
         }
 
@@ -1978,7 +2503,7 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
           sLogger->error(
               "Shader program '{}' has no uniform binding named '{}'",
               HandleProvider<ShaderHandle>::getName(sh),
-              HandleProvider<TextureHandle>::getName(th));
+              HandleProvider<ImageHandle>::getName(th));
           return nullptr;
         }
 
@@ -2020,7 +2545,7 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
       }
     }
 
-    bindGroupDesc.entryCount = bindingCount;
+    bindGroupDesc.entryCount = shaderBindingDescs.size();
     bindGroupDesc.entries = bindGroupEntries.data();
 
     return sBindingGroups[descriptorHash] =
