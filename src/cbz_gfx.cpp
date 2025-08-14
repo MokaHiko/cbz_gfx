@@ -53,7 +53,7 @@ static void MouseButtonCallback(GLFWwindow *, int button, int action,
     sMouseButtonMap[button] = false;
   }
 }
-static void MouseMoveCallback(GLFWwindow *_, double xpos, double ypos) {
+static void MouseMoveCallback(GLFWwindow *, double xpos, double ypos) {
   sMouseDeltaX = xpos - static_cast<double>(sMousePosition.x);
   sMouseDeltaY = ypos - static_cast<double>(sMousePosition.y);
 
@@ -135,6 +135,8 @@ double GetAxis(Axis axis) {
     return -glm::sign(sMouseDeltaY);
   } break;
   }
+
+  return 0;
 }
 
 }; // namespace input
@@ -439,7 +441,16 @@ void TextureSet(CBZTextureSlot slot, ImageHandle th, TextureBindingDesc desc) {
   }
 
   Binding binding = {};
+  switch (desc.viewDimension) {
+  case (CBZ_TEXTURE_VIEW_DIMENSION_2D): {
   binding.type = BindingType::eTexture2D;
+  } break;
+
+  case (CBZ_TEXTURE_VIEW_DIMENSION_CUBE): {
+  binding.type = BindingType::eTextureCube;
+  } break;
+  }
+
   binding.value.texture.slot = static_cast<uint8_t>(slot);
   binding.value.texture.handle = th;
   sShaderProgramCmds[sNextShaderProgramCmdIdx].bindings.push_back(binding);

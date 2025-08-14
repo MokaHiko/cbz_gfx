@@ -57,12 +57,12 @@ private:
 
 private:
   std::vector<BindingDesc> mBindingDescs;
-  WGPUBindGroupLayout mBindGroupLayout;
+  WGPUBindGroupLayout mBindGroupLayout = NULL;
 
   VertexLayout mVertexLayout;
 
-  WGPUShaderStageFlags mStages;
-  WGPUShaderModule mModule;
+  WGPUShaderStageFlags mStages = 0;
+  WGPUShaderModule mModule = NULL;
 };
 
 class VertexBufferWebGPU {
@@ -82,8 +82,8 @@ public:
 
 private:
   VertexLayout mVertexLayout;
-  WGPUBuffer mBuffer;
-  uint32_t mVertexCount;
+  WGPUBuffer mBuffer = NULL;
+  uint32_t mVertexCount = 0;
 };
 
 class IndexBufferWebGPU {
@@ -194,9 +194,8 @@ public:
             wgpuTextureGetDepthOrArrayLayers(mTexture)};
   }
 
-  [[nodiscard]] WGPUBindGroupEntry createBindGroupEntry(uint32_t binding);
   [[nodiscard]] WGPUTextureView
-  findOrCreateTextureView(WGPUTextureAspect aspect);
+  findOrCreateTextureView(WGPUTextureAspect aspect, uint32_t baseArrayLayer = 0, uint32_t arrayLayerCount = 1, CBZTextureViewDimension viewDimension = CBZ_TEXTURE_VIEW_DIMENSION_2D);
 
   void destroyTextureViews();
 
@@ -205,7 +204,7 @@ public:
 private:
   friend class RendererContextWebGPU;
 
-  WGPUTexture mTexture;
+  WGPUTexture mTexture = NULL;
   std::unordered_map<uint32_t, WGPUTextureView> mViews;
 };
 

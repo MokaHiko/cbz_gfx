@@ -92,6 +92,7 @@ enum class BindingType {
   eRWStructuredBuffer,
 
   eTexture2D,
+  eTextureCube,
 };
 
 struct BindingDesc {
@@ -153,9 +154,9 @@ struct ShaderProgramCommand {
 
   std::vector<Binding> bindings;
 
-  uint64_t sortKey;
-  uint32_t submissionID;
-  uint8_t target;
+  uint64_t sortKey = 0;
+  uint32_t submissionID = 0;
+  uint8_t target = 0;
 
   inline uint32_t getDescriptorHash() const { return sortKey & 0xFFFFFFFF; }
 };
@@ -163,8 +164,7 @@ struct ShaderProgramCommand {
 // @brief A render target represents a framebuffer or a compute pass.
 struct RenderTarget {
   std::vector<AttachmentDescription> colorAttachments;
-  AttachmentDescription depthAttachment = {
-      ImageHandle{CBZ_INVALID_HANDLE}, {}, 0};
+  AttachmentDescription depthAttachment = {{}, ImageHandle{CBZ_INVALID_HANDLE}};
 };
 
 class IRendererContext {

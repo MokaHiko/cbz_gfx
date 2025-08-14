@@ -97,6 +97,7 @@ void Image(cbz::ImageHandle imgh, const ImVec2 &size, const ImVec2 &uv0,
 }; // namespace cbz::imgui
 
 namespace cbz {
+
 void SetImGuiRenderCallback(CBZ_ImGuiRenderFunc func) {
   sImguiRenderfunc = func;
 }
@@ -493,7 +494,7 @@ private:
       }
 
       if (data) {
-        AlignedWriteBufferWGPU(mStagingBuffer, data, len);
+        AlignedWriteBufferWGPU(mStagingBuffer, data, static_cast<uint32_t>(len));
       }
 
       sLogger->trace("Staging buffer resized to {}", len);
@@ -507,8 +508,8 @@ private:
                                                     const Binding *bindings,
                                                     uint32_t bindingCount);
 
-  WGPUBuffer mStagingBuffer;
-  uint32_t mFrameCounter;
+  WGPUBuffer mStagingBuffer = NULL;
+  uint32_t mFrameCounter = 0;
 };
 
 Result VertexBufferWebGPU::create(const VertexLayout &vertexLayout,
@@ -818,24 +819,14 @@ void TextureWebGPU::update(void *data, uint32_t count) {
   wgpuQueueWriteTexture(sQueue, &destination, data, size, &dataLayout, &extent);
 }
 
-WGPUBindGroupEntry TextureWebGPU::createBindGroupEntry(uint32_t binding) {
-  WGPUBindGroupEntry entry = {};
-  entry.nextInChain = nullptr;
-  entry.binding = binding;
-  entry.offset = 0;
-
-  entry.textureView = findOrCreateTextureView(WGPUTextureAspect_All);
-
-  return entry;
-}
-
 WGPUTextureView
-TextureWebGPU::findOrCreateTextureView(WGPUTextureAspect aspect) {
-  uint32_t textureViewKey;
-  MurmurHash3_x86_32(&aspect, sizeof(WGPUTextureAspect), 0, &textureViewKey);
+TextureWebGPU::findOrCreateTextureView(WGPUTextureAspect aspect, uint32_t baseArrayLayer, uint32_t arrayLayerCount, CBZTextureViewDimension viewDimension) {
+  uint32_t textureViewKey[]{static_cast<uint32_t>(aspect), baseArrayLayer, arrayLayerCount};
+  uint32_t textureViewHash;
+  MurmurHash3_x86_32(textureViewKey, sizeof(textureViewKey), 0, &textureViewHash);
 
-  if (mViews.find(textureViewKey) != mViews.end()) {
-    return mViews[textureViewKey];
+  if (mViews.find(textureViewHash) != mViews.end()) {
+    return mViews[textureViewHash];
   }
 
   WGPUTextureViewDescriptor textureView = {};
@@ -845,38 +836,21 @@ TextureWebGPU::findOrCreateTextureView(WGPUTextureAspect aspect) {
 
   textureView.aspect = aspect;
 
-  // TODO: Remove
-  // switch (textureView.format) {
-  // case WGPUTextureFormat_RGBA8Unorm: {
-  //   textureView.aspect = WGPUTextureAspect_All;
-  // } break;
-  // case WGPUTextureFormat_Depth32Float: {
-  //   textureView.aspect = WGPUTextureAspect_DepthOnly;
-  // } break;
-  // case WGPUTextureFormat_Undefined:
-  // default:
-  //   sLogger->error("Unsupported aspect for texture!");
-  //   break;
-  // };
-
-  switch (wgpuTextureGetDimension(mTexture)) {
-  case WGPUTextureDimension_2D:
+  switch (viewDimension) {
+  case CBZ_TEXTURE_VIEW_DIMENSION_2D:
     textureView.dimension = WGPUTextureViewDimension_2D;
     break;
-  case WGPUTextureDimension_1D:
-  case WGPUTextureDimension_3D:
-  case WGPUTextureDimension_Force32:
-  default:
-    sLogger->error("Unsupported dimension for texture!");
+  case CBZ_TEXTURE_VIEW_DIMENSION_CUBE:
+    textureView.dimension = WGPUTextureViewDimension_Cube;
     break;
   }
   textureView.baseMipLevel = 0;
   textureView.mipLevelCount = 1;
-  textureView.baseArrayLayer = 0;
-  textureView.arrayLayerCount = 1;
+  textureView.baseArrayLayer = baseArrayLayer;
+  textureView.arrayLayerCount = arrayLayerCount;
   textureView.aspect = aspect;
 
-  return mViews[textureViewKey] = wgpuTextureCreateView(mTexture, &textureView);
+  return mViews[textureViewHash] = wgpuTextureCreateView(mTexture, &textureView);
 }
 
 void TextureWebGPU::destroyTextureViews() {
@@ -1115,6 +1089,10 @@ void ShaderWebGPU::parseJsonRecursive(const nlohmann::json &varJson,
       if (baseShape == "texture2D") {
         mBindingDescs.back().type = BindingType::eTexture2D;
       }
+
+      if (baseShape == "textureCube") {
+        mBindingDescs.back().type = BindingType::eTextureCube;
+      }
     }
 
     sLogger->trace("    - resouceShape: {}", baseShape);
@@ -1264,6 +1242,12 @@ Result ShaderWebGPU::create(const std::string &path, CBZShaderFlags flags) {
       bindingEntries[i].texture.viewDimension = WGPUTextureViewDimension_2D;
       break;
 
+    case BindingType::eTextureCube:
+      bindingEntries[i].texture.nextInChain = nullptr;
+      bindingEntries[i].texture.sampleType = WGPUTextureSampleType_Float;
+      bindingEntries[i].texture.viewDimension = WGPUTextureViewDimension_Cube;
+      break;
+
     case BindingType::eNone:
       sLogger->error("Unsupported binding type <{}> for {}",
                      (uint32_t)getBindings()[i].type);
@@ -1363,7 +1347,7 @@ WGPURenderPipeline
 GraphicsProgramWebGPU::findOrCreatePipeline(const RenderTarget &target) {
   uint32_t pipelineId;
   MurmurHash3_x86_32(target.colorAttachments.data(),
-                     target.colorAttachments.size(),
+                     static_cast<uint32_t>(target.colorAttachments.size()),
                      (uint32_t)(target.depthAttachment.imgh.idx), &pipelineId);
 
   if (auto it = mPipelines.find(pipelineId); it != mPipelines.end()) {
@@ -1818,7 +1802,6 @@ uint32_t RendererContextWebGPU::submitSorted(
   // Target struct
   uint8_t target = CBZ_INVALID_RENDER_TARGET;
   CBZTargetType targetType = CBZ_TARGET_TYPE_NONE;
-
   uint64_t targetSortKey = std::numeric_limits<uint64_t>::max();
 
   // Compute state
@@ -1845,6 +1828,10 @@ uint32_t RendererContextWebGPU::submitSorted(
         if (computePassEncoder != NULL) {
           wgpuComputePassEncoderEnd(computePassEncoder);
           wgpuComputePassEncoderRelease(computePassEncoder);
+
+          // Clear sort key; Targets may use the same program back to back. 
+          // This forces pipelines to rebind each target switch.
+          targetSortKey = std::numeric_limits<uint32_t>::max();
         }
       } break;
 
@@ -1852,6 +1839,10 @@ uint32_t RendererContextWebGPU::submitSorted(
         if (renderPassEncoder != NULL) {
           wgpuRenderPassEncoderEnd(renderPassEncoder);
           wgpuRenderPassEncoderRelease(renderPassEncoder);
+
+          // Clear sort key; Targets may use the same program back to back. 
+          // This forces pipelines to rebind each target switch.
+          targetSortKey = std::numeric_limits<uint32_t>::max();
         }
       } break;
 
@@ -1895,7 +1886,9 @@ uint32_t RendererContextWebGPU::submitSorted(
             colorAttachments[colorAttachmentIdx].view =
                 sTextures[renderTarget.colorAttachments[colorAttachmentIdx]
                               .imgh.idx]
-                    .findOrCreateTextureView(WGPUTextureAspect_All);
+                    .findOrCreateTextureView(WGPUTextureAspect_All, 
+                               renderTarget.colorAttachments[colorAttachmentIdx].baseArrayLayer, 
+                               renderTarget.colorAttachments[colorAttachmentIdx].arrayLayerCount);
 
             colorAttachments[colorAttachmentIdx].loadOp = WGPULoadOp_Clear;
             colorAttachments[colorAttachmentIdx].storeOp = WGPUStoreOp_Store;
@@ -2056,6 +2049,9 @@ uint32_t RendererContextWebGPU::submitSorted(
           uint32_t offsets = 0;
           wgpuRenderPassEncoderSetBindGroup(renderPassEncoder, 0,
                                             graphicsBindGroup, 0, &offsets);
+        } else {
+          sLogger->error("Failed to create bind group for {}!", 
+              HandleProvider<GraphicsProgramHandle>::getName(renderCmd.program.graphics.ph));
         }
 
         if (vb.bind(renderPassEncoder) != Result::eSuccess) {
@@ -2132,29 +2128,6 @@ uint32_t RendererContextWebGPU::submitSorted(
     break;
   }
 
-  // // TODO: Copy texture to texture
-  // WGPUImageCopyTexture srcTexture = {};
-  // srcTexture.nextInChain = nullptr;
-  // srcTexture.texture = *(WGPUTexture *)(&sTextures[1]);
-  // srcTexture.mipLevel = 0;
-  // srcTexture.origin = {0, 0, 0};
-  // srcTexture.aspect = WGPUTextureAspect_All;
-  //
-  // WGPUImageCopyTexture dstTexture = {};
-  // dstTexture.nextInChain = nullptr;
-  // dstTexture.texture = *(WGPUTexture *)(&sTextures[0]);
-  // dstTexture.mipLevel = 0;
-  // dstTexture.origin = {0, 0, 0};
-  // dstTexture.aspect = WGPUTextureAspect_All;
-  //
-  // WGPUExtent3D copyExtent = sTextures[1].getExtent();
-  // // copyExtent.width = ;
-  // // copyExtent.height;
-  // // copyExtent.depthOrArrayLayers;
-  // wgpuCommandEncoderCopyTextureToTexture(cmdEncoder, &srcTexture,
-  // &dstTexture,
-  //                                        &copyExtent);
-  //
   WGPUCommandBufferDescriptor cmdDesc = {};
   cmdDesc.nextInChain = nullptr;
   std::string commandBufferLabel =
@@ -2493,7 +2466,7 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
 
         if (it->type != BindingType::eTexture2D) {
           sLogger->error(
-              "Bound program has uniform binding and type mismatch for '{}'",
+              "Bound program has uniform binding type mismatch for '{}'",
               HandleProvider<ImageHandle>::getName(th));
           return nullptr;
         }
@@ -2506,7 +2479,43 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
           return nullptr;
         }
 
-        bindGroupEntries[i] = sTextures[th.idx].createBindGroupEntry(it->index);
+		bindGroupEntries[i].nextInChain = nullptr;
+		bindGroupEntries[i].binding = it->index;
+		bindGroupEntries[i].offset = 0;
+		bindGroupEntries[i].textureView = sTextures[th.idx]
+            .findOrCreateTextureView(WGPUTextureAspect_All, 0, 1, CBZ_TEXTURE_VIEW_DIMENSION_2D);
+      } break;
+
+      case BindingType::eTextureCube: {
+        ImageHandle th = bindings[i].value.texture.handle;
+
+        const auto &it = std::find_if(
+            shaderBindingDescs.begin(), shaderBindingDescs.end(),
+            [=](const BindingDesc &bindingDesc) {
+              return bindingDesc.index == bindings[i].value.texture.slot;
+            });
+
+        if (it->type != BindingType::eTextureCube) {
+          sLogger->error(
+              "Bound program has uniform binding type mismatch for '{}'",
+              HandleProvider<ImageHandle>::getName(th));
+          return nullptr;
+        }
+
+        if (it == shaderBindingDescs.end()) {
+          sLogger->error(
+              "Shader program '{}' has no uniform binding named '{}'",
+              HandleProvider<ShaderHandle>::getName(sh),
+              HandleProvider<ImageHandle>::getName(th));
+          return nullptr;
+        }
+
+		bindGroupEntries[i].nextInChain = nullptr;
+		bindGroupEntries[i].binding = it->index;
+		bindGroupEntries[i].offset = 0;
+
+		bindGroupEntries[i].textureView = sTextures[th.idx]
+            .findOrCreateTextureView(WGPUTextureAspect_All, 0, 6, CBZ_TEXTURE_VIEW_DIMENSION_CUBE);
       } break;
 
       case BindingType::eSampler: {

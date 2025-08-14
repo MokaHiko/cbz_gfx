@@ -29,7 +29,7 @@ enum class HttpContentType {
   eApplicationJson,
 };
 
-CBZ_API class HttpResponse {
+class CBZ_API HttpResponse {
 public:
   HttpResponse(const HttpResponse &) = delete;
   HttpResponse &operator=(const HttpResponse &) = delete;
@@ -56,7 +56,7 @@ private:
   Scope<Buffer> mContent;
 };
 
-CBZ_API class IHttpClient {
+class CBZ_API IHttpClient {
 public:
   IHttpClient(const Endpoint &baseAddress);
   virtual ~IHttpClient() = default;
@@ -71,7 +71,7 @@ public:
                                               const char *jsonString) = 0;
 
 protected:
-  // TODO:  MAke this the only virtual. Everything else can just build raw
+  // TODO:  Make this the only virtual. Everything else can just build raw
   // request.
   [[nodiscard]] virtual HttpResponse
   sendRawRequest(const std::string &requestStr) = 0;

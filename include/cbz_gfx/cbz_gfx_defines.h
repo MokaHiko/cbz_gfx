@@ -201,6 +201,11 @@ typedef enum {
   CBZ_TEXTURE_DIMENSION_3D = 0x00000002,
 } CBZTextureDimension;
 
+typedef enum : uint32_t {
+    CBZ_TEXTURE_VIEW_DIMENSION_2D = 0,
+    CBZ_TEXTURE_VIEW_DIMENSION_CUBE,
+} CBZTextureViewDimension;
+
 // @note one to one mapping with 'WGPUAddressMode'
 typedef enum {
   CBZ_ADDRESS_MODE_REPEAT = 0X00000000,
@@ -344,9 +349,10 @@ typedef enum : uint32_t {
   }
 }
 
-CBZ_API struct TextureBindingDesc {
+struct CBZ_API TextureBindingDesc {
   CBZFilterMode filterMode;
   CBZAddressMode addressMode;
+  CBZTextureViewDimension viewDimension;
 };
 
 CBZ_NO_DISCARD constexpr uint32_t
@@ -455,19 +461,19 @@ TextureFormatGetSize(CBZTextureFormat format) {
   }
 }
 
-CBZ_API struct VertexAttribute {
+struct CBZ_API VertexAttribute {
   CBZVertexFormat format;
   uint64_t offset;
   uint32_t shaderLocation;
 };
 
-CBZ_API struct Origin3D {
+struct CBZ_API Origin3D {
   uint32_t x;
   uint32_t y;
   uint32_t z;
 };
 
-CBZ_API struct TextureExtent {
+struct CBZ_API TextureExtent {
   int width;
   int height;
   int layers;
@@ -477,7 +483,7 @@ CBZ_API struct TextureExtent {
 //  @note Handles may be recycled when destroyed
 #define CBZ_INVALID_HANDLE ((uint16_t)0xFFFF)
 #define CBZ_HANDLE(name)                                                       \
-  CBZ_API struct name {                                                        \
+  struct CBZ_API name {                                                        \
     uint16_t idx;                                                              \
     explicit operator bool() const { return idx != CBZ_INVALID_HANDLE; }       \
   };
@@ -488,20 +494,27 @@ CBZ_HANDLE(IndexBufferHandle);
 CBZ_HANDLE(StructuredBufferHandle);
 CBZ_HANDLE(ImageHandle);
 
-CBZ_API struct SamplerHandle {
+struct CBZ_API SamplerHandle {
   uint32_t idx;
 };
 
-CBZ_API struct AttachmentDescription {
-  cbz::ImageHandle
-      imgh; // Image Handle created with CBZ_IMAGE_RENDER_ATTACHMENT
+struct CBZ_API AttachmentDescription {
+  // Color clear values
   struct Color {
     double r;
     double g;
     double b;
     double a;
-  } clearValue; // Color clear values
-  int flags;    // CBZRenderAttachmentFlags
+  } clearValue = {0.0, 0.0, 0.0, 1.0}; 
+
+  // Image Handle created with CBZ_IMAGE_RENDER_ATTACHMENT
+  cbz::ImageHandle imgh = {CBZ_INVALID_HANDLE}; 
+
+  uint32_t baseArrayLayer = 0;
+  uint32_t arrayLayerCount = 1;
+
+  // CBZRenderAttachmentFlags
+  int flags = 0; 
 };
 
 CBZ_HANDLE(UniformHandle);
@@ -517,7 +530,7 @@ CBZ_HANDLE(FramebufferHandle);
 // TODO: Remove stl from public fns
 #include <vector>
 namespace cbz {
-CBZ_API class VertexLayout {
+class CBZ_API VertexLayout {
 public:
   void begin(CBZVertexStepMode mode);
   void push_attribute(CBZVertexAttributeType type, CBZVertexFormat format);
@@ -527,8 +540,8 @@ public:
   bool operator!=(const VertexLayout &other) const;
 
   std::vector<VertexAttribute> attributes;
-  CBZVertexStepMode stepMode;
-  uint32_t stride;
+  CBZVertexStepMode stepMode = CBZ_VERTEX_STEP_MODE_VERTEX;
+  uint32_t stride = 0;
 };
 } // namespace cbz
 

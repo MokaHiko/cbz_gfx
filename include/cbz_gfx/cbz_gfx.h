@@ -2,11 +2,14 @@
 #define CBZ_H_
 
 #include "cbz_gfx_defines.h"
+
+#include <cbz/cbz_defines.h>
+
 #include <functional>
 
 namespace cbz {
 
-CBZ_API struct InitDesc {
+struct CBZ_API InitDesc {
   const char *name;
   uint32_t width;
   uint32_t height;
@@ -15,7 +18,7 @@ CBZ_API struct InitDesc {
 
 CBZ_API Result Init(InitDesc initDesc);
 
-[[nodiscard]] CBZ_API VertexBufferHandle
+CBZ_API VertexBufferHandle
 VertexBufferCreate(const VertexLayout &vertexLayout, uint32_t vertexCount,
                    const void *data = nullptr, const char *name = "");
 
@@ -35,7 +38,7 @@ CBZ_API void IndexBufferDestroy(IndexBufferHandle ibh);
     CBZUniformType type, uint32_t elementCount,
     const void *elementData = nullptr, int flags = 0, const char *name = "");
 
-void StructuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,
+CBZ_API void StructuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,
                             const void *data, uint32_t offset = 0);
 
 CBZ_API void StructuredBufferSet(CBZBufferSlot slot, StructuredBufferHandle sbh,
@@ -73,16 +76,17 @@ CBZ_API void Image2DUpdate(ImageHandle imgh, void *data, uint32_t count);
 CBZ_API void TextureSet(CBZTextureSlot slot, ImageHandle imgh,
                         TextureBindingDesc desc = {});
 
-void ImageDestroy(ImageHandle imgh);
+CBZ_API void ImageDestroy(ImageHandle imgh);
 
-[[nodiscard]] CBZ_API ShaderHandle ShaderCreate(const char *path,
+CBZ_NO_DISCARD CBZ_API ShaderHandle ShaderCreate(const char *path,
                                                 int flags = 0);
 
 CBZ_API void ShaderSetName(ShaderHandle sh, const char *name, uint32_t len);
 
 CBZ_API void ShaderDestroy(ShaderHandle sh);
 
-[[nodiscard]] CBZ_API GraphicsProgramHandle
+
+CBZ_NO_DISCARD CBZ_API GraphicsProgramHandle
 GraphicsProgramCreate(ShaderHandle sh, int flags = 0);
 
 CBZ_API void GraphicsProgramSetName(GraphicsProgramHandle gph, const char *name,
@@ -90,7 +94,7 @@ CBZ_API void GraphicsProgramSetName(GraphicsProgramHandle gph, const char *name,
 
 CBZ_API void GraphicsProgramDestroy(GraphicsProgramHandle gph);
 
-[[nodiscard]] CBZ_API ComputeProgramHandle
+CBZ_API ComputeProgramHandle
 ComputeProgramCreate(ShaderHandle sh, const char *name = "");
 
 CBZ_API void ComputeProgramDestroy(ComputeProgramHandle gph);
@@ -101,15 +105,15 @@ CBZ_API void ProjectionSet(const float *projection);
 
 CBZ_API void ViewSet(const float *projection);
 
-void ReadBufferAsync(StructuredBufferHandle sbh,
+CBZ_API void ReadBufferAsync(StructuredBufferHandle sbh,
                      std::function<void(const void *data)> callback);
 
 // [[deprecated("not really, just incomplete :)")]]
-void TextureReadAsync(ImageHandle imgh, const Origin3D *origin,
+CBZ_API void TextureReadAsync(ImageHandle imgh, const Origin3D *origin,
                       const TextureExtent *extent,
                       std::function<void(const void *data)> callback);
 
-void RenderTargetSet(uint8_t target,
+CBZ_API void RenderTargetSet(uint8_t target,
                      const AttachmentDescription *colorAttachments,
                      uint32_t colorAttachmentCount,
                      const AttachmentDescription *depthAttachment = NULL);
@@ -289,10 +293,10 @@ enum class MouseButton : uint32_t {
 };
 
 // Input functions
-[[nodiscard]] CBZ_API CBZBool32 IsKeyDown(Key key);
-[[nodiscard]] CBZ_API CBZBool32 IsKeyPressed(Key key);
+CBZ_NO_DISCARD CBZ_API CBZBool32 IsKeyDown(Key key);
+CBZ_NO_DISCARD CBZ_API CBZBool32 IsKeyPressed(Key key);
 
-CBZ_API struct MousePosition {
+struct CBZ_API MousePosition {
   uint32_t x, y;
 };
 
