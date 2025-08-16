@@ -16,6 +16,8 @@ public:
   static inline const std::string &getName(HandleT handle) {
     if (!isValid(handle)) {
       spdlog::error("Attempting to get name of invalid handle!");
+      static const std::string invalidName = "<invalid_handle>";
+      return invalidName;
     }
 
     return sItemNames[handle.idx];

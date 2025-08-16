@@ -494,7 +494,8 @@ private:
       }
 
       if (data) {
-        AlignedWriteBufferWGPU(mStagingBuffer, data, static_cast<uint32_t>(len));
+        AlignedWriteBufferWGPU(mStagingBuffer, data,
+                               static_cast<uint32_t>(len));
       }
 
       sLogger->trace("Staging buffer resized to {}", len);
@@ -819,11 +820,14 @@ void TextureWebGPU::update(void *data, uint32_t count) {
   wgpuQueueWriteTexture(sQueue, &destination, data, size, &dataLayout, &extent);
 }
 
-WGPUTextureView
-TextureWebGPU::findOrCreateTextureView(WGPUTextureAspect aspect, uint32_t baseArrayLayer, uint32_t arrayLayerCount, CBZTextureViewDimension viewDimension) {
-  uint32_t textureViewKey[]{static_cast<uint32_t>(aspect), baseArrayLayer, arrayLayerCount};
+WGPUTextureView TextureWebGPU::findOrCreateTextureView(
+    WGPUTextureAspect aspect, uint32_t baseArrayLayer, uint32_t arrayLayerCount,
+    CBZTextureViewDimension viewDimension) {
+  uint32_t textureViewKey[]{static_cast<uint32_t>(aspect), baseArrayLayer,
+                            arrayLayerCount};
   uint32_t textureViewHash;
-  MurmurHash3_x86_32(textureViewKey, sizeof(textureViewKey), 0, &textureViewHash);
+  MurmurHash3_x86_32(textureViewKey, sizeof(textureViewKey), 0,
+                     &textureViewHash);
 
   if (mViews.find(textureViewHash) != mViews.end()) {
     return mViews[textureViewHash];
@@ -850,7 +854,8 @@ TextureWebGPU::findOrCreateTextureView(WGPUTextureAspect aspect, uint32_t baseAr
   textureView.arrayLayerCount = arrayLayerCount;
   textureView.aspect = aspect;
 
-  return mViews[textureViewHash] = wgpuTextureCreateView(mTexture, &textureView);
+  return mViews[textureViewHash] =
+             wgpuTextureCreateView(mTexture, &textureView);
 }
 
 void TextureWebGPU::destroyTextureViews() {
@@ -1829,7 +1834,7 @@ uint32_t RendererContextWebGPU::submitSorted(
           wgpuComputePassEncoderEnd(computePassEncoder);
           wgpuComputePassEncoderRelease(computePassEncoder);
 
-          // Clear sort key; Targets may use the same program back to back. 
+          // Clear sort key; Targets may use the same program back to back.
           // This forces pipelines to rebind each target switch.
           targetSortKey = std::numeric_limits<uint32_t>::max();
         }
@@ -1840,7 +1845,7 @@ uint32_t RendererContextWebGPU::submitSorted(
           wgpuRenderPassEncoderEnd(renderPassEncoder);
           wgpuRenderPassEncoderRelease(renderPassEncoder);
 
-          // Clear sort key; Targets may use the same program back to back. 
+          // Clear sort key; Targets may use the same program back to back.
           // This forces pipelines to rebind each target switch.
           targetSortKey = std::numeric_limits<uint32_t>::max();
         }
@@ -1886,9 +1891,12 @@ uint32_t RendererContextWebGPU::submitSorted(
             colorAttachments[colorAttachmentIdx].view =
                 sTextures[renderTarget.colorAttachments[colorAttachmentIdx]
                               .imgh.idx]
-                    .findOrCreateTextureView(WGPUTextureAspect_All, 
-                               renderTarget.colorAttachments[colorAttachmentIdx].baseArrayLayer, 
-                               renderTarget.colorAttachments[colorAttachmentIdx].arrayLayerCount);
+                    .findOrCreateTextureView(
+                        WGPUTextureAspect_All,
+                        renderTarget.colorAttachments[colorAttachmentIdx]
+                            .baseArrayLayer,
+                        renderTarget.colorAttachments[colorAttachmentIdx]
+                            .arrayLayerCount);
 
             colorAttachments[colorAttachmentIdx].loadOp = WGPULoadOp_Clear;
             colorAttachments[colorAttachmentIdx].storeOp = WGPUStoreOp_Store;
@@ -2011,10 +2019,11 @@ uint32_t RendererContextWebGPU::submitSorted(
 
         if (sShaders[graphicsProgram.getShader().idx].getVertexLayout() !=
             vb.getVertexLayout()) {
-          sLogger->warn("Incompatible vertex buffer and program layout for {}",
-                        HandleProvider<GraphicsProgramHandle>::getName(
-                            renderCmd.program.graphics.ph));
-          sLogger->warn("Discarding draw...");
+          // sLogger->warn(
+          //     "Incompatible vertex buffer and program layout for '{}'",
+          //     HandleProvider<GraphicsProgramHandle>::getName(
+          //         renderCmd.program.graphics.ph));
+          // sLogger->warn("Discarding draw...");
           continue;
         }
 
@@ -2050,8 +2059,9 @@ uint32_t RendererContextWebGPU::submitSorted(
           wgpuRenderPassEncoderSetBindGroup(renderPassEncoder, 0,
                                             graphicsBindGroup, 0, &offsets);
         } else {
-          sLogger->error("Failed to create bind group for {}!", 
-              HandleProvider<GraphicsProgramHandle>::getName(renderCmd.program.graphics.ph));
+          sLogger->error("Failed to create bind group for {}!",
+                         HandleProvider<GraphicsProgramHandle>::getName(
+                             renderCmd.program.graphics.ph));
         }
 
         if (vb.bind(renderPassEncoder) != Result::eSuccess) {
@@ -2381,150 +2391,360 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
     bindGroupDesc.label = nullptr;
     bindGroupDesc.layout = shader->getBindGroupLayout();
 
-    std::vector<WGPUBindGroupEntry> bindGroupEntries(bindingCount);
+    // std::vector<WGPUBindGroupEntry> bindGroupEntries(
+    //     shader->getBindings().size());
+    // for (uint32_t i = 0; i <
+    // static_cast<uint32_t>(shaderBindingDescs.size());
+    //      i++) {
+    //   switch (bindings[i].type) {
+    //   case BindingType::eUniformBuffer: {
+    //     UniformHandle uh = bindings[i].value.uniformBuffer.handle;
+    //
+    //     const auto &it =
+    //         std::find_if(shaderBindingDescs.begin(),
+    //         shaderBindingDescs.end(),
+    //                      [=](const BindingDesc &bindingDesc) {
+    //                        return bindingDesc.name ==
+    //                               HandleProvider<UniformHandle>::getName(uh);
+    //                      });
+    //
+    //     if (it == shaderBindingDescs.end()) {
+    //       sLogger->error(
+    //           "Shader program '{}' has no uniform binding named '{}'",
+    //           HandleProvider<ShaderHandle>::getName(sh),
+    //           HandleProvider<UniformHandle>::getName(uh));
+    //       return nullptr;
+    //     }
+    //
+    //     if (it->elementSize + it->padding >
+    //     sUniformBuffers[uh.idx].getSize()) {
+    //       sLogger->error("Uniform '{}' size too small (< {} bytes); requires
+    //       "
+    //                      "64. Increase elementCount.",
+    //                      HandleProvider<UniformHandle>::getName(uh),
+    //                      sUniformBuffers[uh.idx].getSize(), it->elementSize);
+    //       return nullptr;
+    //     }
+    //
+    //     if (it->elementSize + it->padding <
+    //     sUniformBuffers[uh.idx].getSize()) {
+    //       sLogger->warn("Uniform '{}' size larger than (< {} bytes); requires
+    //       "
+    //                     "{}. Mismatch or unused in shader binding!",
+    //                     HandleProvider<UniformHandle>::getName(uh),
+    //                     sUniformBuffers[uh.idx].getSize(), it->elementSize);
+    //     }
+    //
+    //     bindGroupEntries[i] =
+    //         sUniformBuffers[uh.idx].createBindGroupEntry(it->index);
+    //   } break;
+    //
+    //   case BindingType::eRWStructuredBuffer:
+    //   case BindingType::eStructuredBuffer: {
+    //     switch (bindings[i].value.storageBuffer.valueType) {
+    //     case CBZ_UNIFORM_TYPE_UINT:
+    //     case CBZ_UNIFORM_TYPE_VEC4:
+    //     case CBZ_UNIFORM_TYPE_MAT4: {
+    //       StructuredBufferHandle sbh =
+    //       bindings[i].value.storageBuffer.handle;
+    //
+    //       const auto &it =
+    //           std::find_if(shaderBindingDescs.begin(),
+    //           shaderBindingDescs.end(),
+    //                        [&](const BindingDesc &bindingDesc) {
+    //                          return bindingDesc.index ==
+    //                                 bindings[i].value.storageBuffer.slot;
+    //                        });
+    //
+    //       if (it == shaderBindingDescs.end()) {
+    //         sLogger->error(
+    //             "Bound program has no storage binding named {}",
+    //             HandleProvider<StructuredBufferHandle>::getName(sbh));
+    //         return nullptr;
+    //       }
+    //
+    //       bindGroupEntries[i] =
+    //           sStorageBuffers[sbh.idx].createBindGroupEntry(it->index);
+    //     } break;
+    //
+    //     default:
+    //       sLogger->error("Unsupported storage buffer ShaderValueType!");
+    //       break;
+    //     }
+    //   } break;
+    //
+    //   case BindingType::eTexture2D: {
+    //     ImageHandle th = bindings[i].value.texture.handle;
+    //
+    //     const auto &it = std::find_if(
+    //         shaderBindingDescs.begin(), shaderBindingDescs.end(),
+    //         [=](const BindingDesc &bindingDesc) {
+    //           return bindingDesc.index == bindings[i].value.texture.slot;
+    //         });
+    //
+    //     if (it == shaderBindingDescs.end()) {
+    //       sLogger->error(
+    //           "Shader program '{}' has no uniform binding named '{}'",
+    //           HandleProvider<ShaderHandle>::getName(sh),
+    //           HandleProvider<ImageHandle>::getName(th));
+    //       return nullptr;
+    //     }
+    //
+    //     if (it->type != BindingType::eTexture2D) {
+    //       sLogger->error(
+    //           "Bound program has uniform binding type mismatch for '{}'",
+    //           HandleProvider<ImageHandle>::getName(th));
+    //       return nullptr;
+    //     }
+    //
+    //     bindGroupEntries[i].nextInChain = nullptr;
+    //     bindGroupEntries[i].binding = it->index;
+    //     bindGroupEntries[i].offset = 0;
+    //     bindGroupEntries[i].textureView =
+    //         sTextures[th.idx].findOrCreateTextureView(
+    //             WGPUTextureAspect_All, 0, 1, CBZ_TEXTURE_VIEW_DIMENSION_2D);
+    //   } break;
+    //
+    //   case BindingType::eTextureCube: {
+    //     ImageHandle th = bindings[i].value.texture.handle;
+    //
+    //     const auto &it = std::find_if(
+    //         shaderBindingDescs.begin(), shaderBindingDescs.end(),
+    //         [=](const BindingDesc &bindingDesc) {
+    //           return bindingDesc.index == bindings[i].value.texture.slot;
+    //         });
+    //
+    //     if (it->type != BindingType::eTextureCube) {
+    //       sLogger->error(
+    //           "Bound program has uniform binding type mismatch for '{}'",
+    //           HandleProvider<ImageHandle>::getName(th));
+    //       return nullptr;
+    //     }
+    //
+    //     if (it == shaderBindingDescs.end()) {
+    //       sLogger->error(
+    //           "Shader program '{}' has no uniform binding named '{}'",
+    //           HandleProvider<ShaderHandle>::getName(sh),
+    //           HandleProvider<ImageHandle>::getName(th));
+    //       return nullptr;
+    //     }
+    //
+    //     bindGroupEntries[i].nextInChain = nullptr;
+    //     bindGroupEntries[i].binding = it->index;
+    //     bindGroupEntries[i].offset = 0;
+    //
+    //     bindGroupEntries[i].textureView =
+    //         sTextures[th.idx].findOrCreateTextureView(
+    //             WGPUTextureAspect_All, 0, 6,
+    //             CBZ_TEXTURE_VIEW_DIMENSION_CUBE);
+    //   } break;
+    //
+    //   case BindingType::eSampler: {
+    //     SamplerHandle smplerHandle = bindings[i].value.sampler.handle;
+    //
+    //     const auto &it = std::find_if(
+    //         shaderBindingDescs.begin(), shaderBindingDescs.end(),
+    //         [=](const BindingDesc &bindingDesc) {
+    //           return bindingDesc.index == bindings[i].value.sampler.slot;
+    //         });
+    //
+    //     if (it->type != BindingType::eSampler) {
+    //       sLogger->error("Shader program '{}' has type mismatch",
+    //                      HandleProvider<ShaderHandle>::getName(sh));
+    //       return nullptr;
+    //     }
+    //
+    //     if (it == shaderBindingDescs.end()) {
+    //       sLogger->error(
+    //           "Shader program '{}' has no uniform binding of type <Sampler>",
+    //           HandleProvider<ShaderHandle>::getName(sh));
+    //       return nullptr;
+    //     }
+    //
+    //     WGPUBindGroupEntry entry = {};
+    //     entry.binding = it->index;
+    //     entry.nextInChain = nullptr;
+    //     entry.sampler = sSamplers[smplerHandle.idx];
+    //     bindGroupEntries[i] = entry;
+    //   } break;
+    //
+    //   case BindingType::eNone: {
+    //     sLogger->error("Uknown and unsupported binding!");
+    //   } break;
+    //   }
+    // }
 
-    for (uint32_t i = 0; i < static_cast<uint32_t>(shaderBindingDescs.size());
-         i++) {
-      switch (bindings[i].type) {
+    std::vector<WGPUBindGroupEntry> bindGroupEntries;
+    for (const BindingDesc &bindingDesc : shaderBindingDescs) {
+      switch (bindingDesc.type) {
       case BindingType::eUniformBuffer: {
-        UniformHandle uh = bindings[i].value.uniformBuffer.handle;
+        const Binding *binding = nullptr;
 
-        const auto &it =
-            std::find_if(shaderBindingDescs.begin(), shaderBindingDescs.end(),
-                         [=](const BindingDesc &bindingDesc) {
-                           return bindingDesc.name ==
-                                  HandleProvider<UniformHandle>::getName(uh);
-                         });
+        // Find uniform by name
+        for (uint32_t inputBindingIdx = 0; inputBindingIdx < bindingCount;
+             inputBindingIdx++) {
 
-        if (it == shaderBindingDescs.end()) {
+          if (bindings[inputBindingIdx].type != BindingType::eUniformBuffer) {
+            continue;
+          }
+
+          if (bindingDesc.name ==
+              HandleProvider<UniformHandle>::getName(
+                  bindings[inputBindingIdx].value.uniformBuffer.handle)) {
+            binding = &bindings[inputBindingIdx];
+            break;
+          }
+        }
+
+        if (!binding) {
           sLogger->error(
               "Shader program '{}' has no uniform binding named '{}'",
               HandleProvider<ShaderHandle>::getName(sh),
-              HandleProvider<UniformHandle>::getName(uh));
+              HandleProvider<UniformHandle>::getName(
+                  binding->value.uniformBuffer.handle));
           return nullptr;
         }
 
-        if (it->elementSize + it->padding > sUniformBuffers[uh.idx].getSize()) {
-          sLogger->error("Uniform '{}' size too small (< {} bytes); requires "
-                         "64. Increase elementCount.",
-                         HandleProvider<UniformHandle>::getName(uh),
-                         sUniformBuffers[uh.idx].getSize(), it->elementSize);
-          return nullptr;
-        }
-
-        if (it->elementSize + it->padding < sUniformBuffers[uh.idx].getSize()) {
-          sLogger->warn("Uniform '{}' size larger than (< {} bytes); requires "
-                        "{}. Mismatch or unused in shader binding!",
-                        HandleProvider<UniformHandle>::getName(uh),
-                        sUniformBuffers[uh.idx].getSize(), it->elementSize);
-        }
-
-        bindGroupEntries[i] =
-            sUniformBuffers[uh.idx].createBindGroupEntry(it->index);
+        bindGroupEntries.push_back(
+            sUniformBuffers[binding->value.uniformBuffer.handle.idx]
+                .createBindGroupEntry(bindingDesc.index));
       } break;
 
       case BindingType::eRWStructuredBuffer:
       case BindingType::eStructuredBuffer: {
-        switch (bindings[i].value.storageBuffer.valueType) {
-        case CBZ_UNIFORM_TYPE_UINT:
-        case CBZ_UNIFORM_TYPE_VEC4:
-        case CBZ_UNIFORM_TYPE_MAT4: {
-          StructuredBufferHandle sbh = bindings[i].value.storageBuffer.handle;
+        const Binding *binding = nullptr;
 
-          const auto &it =
-              std::find_if(shaderBindingDescs.begin(), shaderBindingDescs.end(),
-                           [&](const BindingDesc &bindingDesc) {
-                             return bindingDesc.index ==
-                                    bindings[i].value.storageBuffer.slot;
-                           });
+        // Find buffer binding by index/slot
+        for (uint32_t inputBindingIdx = 0; inputBindingIdx < bindingCount;
+             inputBindingIdx++) {
 
-          if (it == shaderBindingDescs.end()) {
-            sLogger->error(
-                "Bound program has no storage binding named {}",
-                HandleProvider<StructuredBufferHandle>::getName(sbh));
-            return nullptr;
+          if (bindings[inputBindingIdx].type !=
+                  BindingType::eRWStructuredBuffer &&
+              bindings[inputBindingIdx].type !=
+                  BindingType::eStructuredBuffer) {
+            continue;
           }
 
-          bindGroupEntries[i] =
-              sStorageBuffers[sbh.idx].createBindGroupEntry(it->index);
-        } break;
-
-        default:
-          sLogger->error("Unsupported storage buffer ShaderValueType!");
-          break;
+          if (bindingDesc.index ==
+              bindings[inputBindingIdx].value.storageBuffer.slot) {
+            binding = &bindings[inputBindingIdx];
+            break;
+          }
         }
+
+        if (!binding) {
+          sLogger->error("Shader program '{}' has no buffer binding at {}",
+                         HandleProvider<ShaderHandle>::getName(sh),
+                         bindingDesc.index);
+          return nullptr;
+        }
+
+        StructuredBufferHandle sbh = binding->value.storageBuffer.handle;
+        bindGroupEntries.push_back(
+            sStorageBuffers[sbh.idx].createBindGroupEntry(bindingDesc.index));
       } break;
 
       case BindingType::eTexture2D: {
-        ImageHandle th = bindings[i].value.texture.handle;
+        const Binding *binding = nullptr;
 
-        const auto &it = std::find_if(
-            shaderBindingDescs.begin(), shaderBindingDescs.end(),
-            [=](const BindingDesc &bindingDesc) {
-              return bindingDesc.index == bindings[i].value.texture.slot;
-            });
+        // Find texture binding by index/slot
+        for (uint32_t inputBindingIdx = 0; inputBindingIdx < bindingCount;
+             inputBindingIdx++) {
 
-        if (it == shaderBindingDescs.end()) {
-          sLogger->error(
-              "Shader program '{}' has no uniform binding named '{}'",
-              HandleProvider<ShaderHandle>::getName(sh),
-              HandleProvider<ImageHandle>::getName(th));
+          if (bindings[inputBindingIdx].type != BindingType::eTexture2D) {
+            continue;
+          }
+
+          if (bindingDesc.index ==
+              bindings[inputBindingIdx].value.storageBuffer.slot) {
+            binding = &bindings[inputBindingIdx];
+            break;
+          }
+        }
+
+        if (!binding) {
+          sLogger->error("Shader program '{}' has no texture binding at {}",
+                         HandleProvider<ShaderHandle>::getName(sh),
+                         bindingDesc.index);
           return nullptr;
         }
 
-        if (it->type != BindingType::eTexture2D) {
-          sLogger->error(
-              "Bound program has uniform binding type mismatch for '{}'",
-              HandleProvider<ImageHandle>::getName(th));
-          return nullptr;
-        }
+        ImageHandle th = binding->value.texture.handle;
 
-		bindGroupEntries[i].nextInChain = nullptr;
-		bindGroupEntries[i].binding = it->index;
-		bindGroupEntries[i].offset = 0;
-		bindGroupEntries[i].textureView = sTextures[th.idx]
-            .findOrCreateTextureView(WGPUTextureAspect_All, 0, 1, CBZ_TEXTURE_VIEW_DIMENSION_2D);
+        WGPUBindGroupEntry &entry = bindGroupEntries.emplace_back();
+        entry.nextInChain = nullptr;
+        entry.binding = bindingDesc.index;
+        entry.offset = 0;
+        entry.textureView = sTextures[th.idx].findOrCreateTextureView(
+            WGPUTextureAspect_All, 0, 1, CBZ_TEXTURE_VIEW_DIMENSION_2D);
       } break;
 
       case BindingType::eTextureCube: {
-        ImageHandle th = bindings[i].value.texture.handle;
+        const Binding *binding = nullptr;
 
-        const auto &it = std::find_if(
-            shaderBindingDescs.begin(), shaderBindingDescs.end(),
-            [=](const BindingDesc &bindingDesc) {
-              return bindingDesc.index == bindings[i].value.texture.slot;
-            });
+        // Find texture binding by index/slot
+        for (uint32_t inputBindingIdx = 0; inputBindingIdx < bindingCount;
+             inputBindingIdx++) {
 
-        if (it->type != BindingType::eTextureCube) {
+          if (bindings[inputBindingIdx].type != BindingType::eTextureCube) {
+            continue;
+          }
+
+          if (bindingDesc.index ==
+              bindings[inputBindingIdx].value.storageBuffer.slot) {
+            binding = &bindings[inputBindingIdx];
+            break;
+          }
+        }
+
+        if (!binding) {
           sLogger->error(
-              "Bound program has uniform binding type mismatch for '{}'",
-              HandleProvider<ImageHandle>::getName(th));
+              "Shader program '{}' has no texture cube binding at {}",
+              HandleProvider<ShaderHandle>::getName(sh), bindingDesc.index);
           return nullptr;
         }
 
-        if (it == shaderBindingDescs.end()) {
-          sLogger->error(
-              "Shader program '{}' has no uniform binding named '{}'",
-              HandleProvider<ShaderHandle>::getName(sh),
-              HandleProvider<ImageHandle>::getName(th));
-          return nullptr;
-        }
+        ImageHandle th = binding->value.texture.handle;
 
-		bindGroupEntries[i].nextInChain = nullptr;
-		bindGroupEntries[i].binding = it->index;
-		bindGroupEntries[i].offset = 0;
-
-		bindGroupEntries[i].textureView = sTextures[th.idx]
-            .findOrCreateTextureView(WGPUTextureAspect_All, 0, 6, CBZ_TEXTURE_VIEW_DIMENSION_CUBE);
+        WGPUBindGroupEntry &entry = bindGroupEntries.emplace_back();
+        entry.nextInChain = nullptr;
+        entry.binding = bindingDesc.index;
+        entry.offset = 0;
+        entry.textureView = sTextures[th.idx].findOrCreateTextureView(
+            WGPUTextureAspect_All, 0, 6, CBZ_TEXTURE_VIEW_DIMENSION_CUBE);
       } break;
 
       case BindingType::eSampler: {
-        SamplerHandle smplerHandle = bindings[i].value.sampler.handle;
+        const Binding *binding = nullptr;
+
+        // Find texture binding by index/slot
+        for (uint32_t inputBindingIdx = 0; inputBindingIdx < bindingCount;
+             inputBindingIdx++) {
+
+          if (bindings[inputBindingIdx].type != BindingType::eSampler) {
+            continue;
+          }
+
+          if (bindingDesc.index ==
+              bindings[inputBindingIdx].value.storageBuffer.slot) {
+            binding = &bindings[inputBindingIdx];
+            break;
+          }
+        }
+
+        if (!binding) {
+          sLogger->error(
+              "Shader program '{}' has no sampler cube binding at {}",
+              HandleProvider<ShaderHandle>::getName(sh), bindingDesc.index);
+          return nullptr;
+        }
+
+        SamplerHandle samplerHandle = binding->value.sampler.handle;
 
         const auto &it = std::find_if(
             shaderBindingDescs.begin(), shaderBindingDescs.end(),
             [=](const BindingDesc &bindingDesc) {
-              return bindingDesc.index == bindings[i].value.sampler.slot;
+              return bindingDesc.index == binding->value.sampler.slot;
             });
 
         if (it->type != BindingType::eSampler) {
@@ -2540,11 +2760,10 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
           return nullptr;
         }
 
-        WGPUBindGroupEntry entry = {};
+        WGPUBindGroupEntry &entry = bindGroupEntries.emplace_back();
         entry.binding = it->index;
         entry.nextInChain = nullptr;
-        entry.sampler = sSamplers[smplerHandle.idx];
-        bindGroupEntries[i] = entry;
+        entry.sampler = sSamplers[samplerHandle.idx];
       } break;
 
       case BindingType::eNone: {

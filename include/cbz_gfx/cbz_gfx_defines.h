@@ -202,8 +202,8 @@ typedef enum {
 } CBZTextureDimension;
 
 typedef enum : uint32_t {
-    CBZ_TEXTURE_VIEW_DIMENSION_2D = 0,
-    CBZ_TEXTURE_VIEW_DIMENSION_CUBE,
+  CBZ_TEXTURE_VIEW_DIMENSION_2D = 0,
+  CBZ_TEXTURE_VIEW_DIMENSION_CUBE,
 } CBZTextureViewDimension;
 
 // @note one to one mapping with 'WGPUAddressMode'
@@ -270,7 +270,7 @@ typedef enum {
   CBZ_BUFFER_COUNT,
 } CBZBufferSlot;
 
-typedef enum {
+typedef enum : uint8_t {
   CBZ_TEXTURE_0 = CBZ_BUFFER_COUNT,
   CBZ_TEXTURE_1 = CBZ_BUFFER_COUNT + 2,
   CBZ_TEXTURE_2 = CBZ_BUFFER_COUNT + 4,
@@ -281,6 +281,10 @@ typedef enum {
   CBZ_TEXTURE_7 = CBZ_BUFFER_COUNT + 14,
   CBZ_TEXTURE_8 = CBZ_BUFFER_COUNT + 16,
 } CBZTextureSlot;
+
+constexpr CBZTextureSlot CBZ_TEXTURE_SLOTS[9]{
+    CBZ_TEXTURE_0, CBZ_TEXTURE_1, CBZ_TEXTURE_2, CBZ_TEXTURE_3, CBZ_TEXTURE_4,
+    CBZ_TEXTURE_5, CBZ_TEXTURE_6, CBZ_TEXTURE_7, CBZ_TEXTURE_8};
 
 typedef enum {
   CBZ_NETWORK_NONE = 0,
@@ -509,16 +513,16 @@ struct CBZ_API AttachmentDescription {
     double g;
     double b;
     double a;
-  } clearValue = {0.0, 0.0, 0.0, 1.0}; 
+  } clearValue = {0.0, 0.0, 0.0, 1.0};
 
   // Image Handle created with CBZ_IMAGE_RENDER_ATTACHMENT
-  cbz::ImageHandle imgh = {CBZ_INVALID_HANDLE}; 
+  cbz::ImageHandle imgh = {CBZ_INVALID_HANDLE};
 
   uint32_t baseArrayLayer = 0;
   uint32_t arrayLayerCount = 1;
 
   // CBZRenderAttachmentFlags
-  int flags = 0; 
+  int flags = 0;
 };
 
 CBZ_HANDLE(UniformHandle);
@@ -547,6 +551,15 @@ public:
   CBZVertexStepMode stepMode = CBZ_VERTEX_STEP_MODE_VERTEX;
   uint32_t stride = 0;
 };
+
+// @brief Represents a RGBA8 color.
+struct CBZ_API ColorRGBA {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+  uint8_t a;
+};
+
 } // namespace cbz
 
 #endif

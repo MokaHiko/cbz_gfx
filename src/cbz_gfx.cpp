@@ -4,8 +4,8 @@
 #include "cbz_gfx/net/cbz_net.h"
 #include "cbz_irenderer_context.h"
 
-#include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -443,11 +443,11 @@ void TextureSet(CBZTextureSlot slot, ImageHandle th, TextureBindingDesc desc) {
   Binding binding = {};
   switch (desc.viewDimension) {
   case (CBZ_TEXTURE_VIEW_DIMENSION_2D): {
-  binding.type = BindingType::eTexture2D;
+    binding.type = BindingType::eTexture2D;
   } break;
 
   case (CBZ_TEXTURE_VIEW_DIMENSION_CUBE): {
-  binding.type = BindingType::eTextureCube;
+    binding.type = BindingType::eTextureCube;
   } break;
   }
 

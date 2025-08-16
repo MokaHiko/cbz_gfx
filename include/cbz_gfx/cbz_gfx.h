@@ -18,9 +18,10 @@ struct CBZ_API InitDesc {
 
 CBZ_API Result Init(InitDesc initDesc);
 
-CBZ_API VertexBufferHandle
-VertexBufferCreate(const VertexLayout &vertexLayout, uint32_t vertexCount,
-                   const void *data = nullptr, const char *name = "");
+CBZ_API VertexBufferHandle VertexBufferCreate(const VertexLayout &vertexLayout,
+                                              uint32_t vertexCount,
+                                              const void *data = nullptr,
+                                              const char *name = "");
 
 CBZ_API void VertexBufferSet(VertexBufferHandle vbh);
 
@@ -38,8 +39,9 @@ CBZ_API void IndexBufferDestroy(IndexBufferHandle ibh);
     CBZUniformType type, uint32_t elementCount,
     const void *elementData = nullptr, int flags = 0, const char *name = "");
 
-CBZ_API void StructuredBufferUpdate(StructuredBufferHandle sbh, uint32_t elementCount,
-                            const void *data, uint32_t offset = 0);
+CBZ_API void StructuredBufferUpdate(StructuredBufferHandle sbh,
+                                    uint32_t elementCount, const void *data,
+                                    uint32_t offset = 0);
 
 CBZ_API void StructuredBufferSet(CBZBufferSlot slot, StructuredBufferHandle sbh,
                                  CBZBool32 dynamic = false);
@@ -79,12 +81,11 @@ CBZ_API void TextureSet(CBZTextureSlot slot, ImageHandle imgh,
 CBZ_API void ImageDestroy(ImageHandle imgh);
 
 CBZ_NO_DISCARD CBZ_API ShaderHandle ShaderCreate(const char *path,
-                                                int flags = 0);
+                                                 int flags = 0);
 
 CBZ_API void ShaderSetName(ShaderHandle sh, const char *name, uint32_t len);
 
 CBZ_API void ShaderDestroy(ShaderHandle sh);
-
 
 CBZ_NO_DISCARD CBZ_API GraphicsProgramHandle
 GraphicsProgramCreate(ShaderHandle sh, int flags = 0);
@@ -94,8 +95,8 @@ CBZ_API void GraphicsProgramSetName(GraphicsProgramHandle gph, const char *name,
 
 CBZ_API void GraphicsProgramDestroy(GraphicsProgramHandle gph);
 
-CBZ_API ComputeProgramHandle
-ComputeProgramCreate(ShaderHandle sh, const char *name = "");
+CBZ_API ComputeProgramHandle ComputeProgramCreate(ShaderHandle sh,
+                                                  const char *name = "");
 
 CBZ_API void ComputeProgramDestroy(ComputeProgramHandle gph);
 
@@ -106,17 +107,17 @@ CBZ_API void ProjectionSet(const float *projection);
 CBZ_API void ViewSet(const float *projection);
 
 CBZ_API void ReadBufferAsync(StructuredBufferHandle sbh,
-                     std::function<void(const void *data)> callback);
+                             std::function<void(const void *data)> callback);
 
 // [[deprecated("not really, just incomplete :)")]]
 CBZ_API void TextureReadAsync(ImageHandle imgh, const Origin3D *origin,
-                      const TextureExtent *extent,
-                      std::function<void(const void *data)> callback);
+                              const TextureExtent *extent,
+                              std::function<void(const void *data)> callback);
 
-CBZ_API void RenderTargetSet(uint8_t target,
-                     const AttachmentDescription *colorAttachments,
-                     uint32_t colorAttachmentCount,
-                     const AttachmentDescription *depthAttachment = NULL);
+CBZ_API void
+RenderTargetSet(uint8_t target, const AttachmentDescription *colorAttachments,
+                uint32_t colorAttachmentCount,
+                const AttachmentDescription *depthAttachment = NULL);
 
 /// @brief Submits a graphics program for rendering on the given target.
 ///
