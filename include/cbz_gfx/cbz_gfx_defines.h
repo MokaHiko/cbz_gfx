@@ -271,11 +271,15 @@ typedef enum {
 } CBZBufferSlot;
 
 typedef enum {
-  CBZ_TEXTURE_0 = 4,
-  CBZ_TEXTURE_1 = 6,
-  CBZ_TEXTURE_2 = 8,
-  CBZ_TEXTURE_3 = 10,
-  CBZ_TEXTURE_4 = 12,
+  CBZ_TEXTURE_0 = CBZ_BUFFER_COUNT,
+  CBZ_TEXTURE_1 = CBZ_BUFFER_COUNT + 2,
+  CBZ_TEXTURE_2 = CBZ_BUFFER_COUNT + 4,
+  CBZ_TEXTURE_3 = CBZ_BUFFER_COUNT + 6,
+  CBZ_TEXTURE_4 = CBZ_BUFFER_COUNT + 8,
+  CBZ_TEXTURE_5 = CBZ_BUFFER_COUNT + 10,
+  CBZ_TEXTURE_6 = CBZ_BUFFER_COUNT + 12,
+  CBZ_TEXTURE_7 = CBZ_BUFFER_COUNT + 14,
+  CBZ_TEXTURE_8 = CBZ_BUFFER_COUNT + 16,
 } CBZTextureSlot;
 
 typedef enum {
@@ -297,7 +301,7 @@ typedef enum : uint32_t {
   COPY_BYTES_PER_ROW_ALIGNMENT = 256,
 } CBZRendererLimits;
 
-[[nodiscard]] constexpr uint32_t VertexFormatGetSize(CBZVertexFormat format) {
+CBZ_NO_DISCARD constexpr uint32_t VertexFormatGetSize(CBZVertexFormat format) {
   switch (format) {
   // 2 bytes
   case CBZ_VERTEX_FORMAT_UINT8X2:

@@ -2464,17 +2464,17 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
               return bindingDesc.index == bindings[i].value.texture.slot;
             });
 
-        if (it->type != BindingType::eTexture2D) {
-          sLogger->error(
-              "Bound program has uniform binding type mismatch for '{}'",
-              HandleProvider<ImageHandle>::getName(th));
-          return nullptr;
-        }
-
         if (it == shaderBindingDescs.end()) {
           sLogger->error(
               "Shader program '{}' has no uniform binding named '{}'",
               HandleProvider<ShaderHandle>::getName(sh),
+              HandleProvider<ImageHandle>::getName(th));
+          return nullptr;
+        }
+
+        if (it->type != BindingType::eTexture2D) {
+          sLogger->error(
+              "Bound program has uniform binding type mismatch for '{}'",
               HandleProvider<ImageHandle>::getName(th));
           return nullptr;
         }
