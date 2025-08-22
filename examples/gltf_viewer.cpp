@@ -14,7 +14,8 @@
 // - Serves as a reference for structured buffer usage, compute dispatch, and
 // fullscreen blit
 // ======================================================================================
-#include <cubozoa/cubozoa.h>
+#include "cbz_gfx/cbz_gfx_defines.h"
+#include <cbz_gfx/cbz_gfx.h>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/html5.h>
@@ -85,13 +86,10 @@ public:
     layout.end();
 
     // Create full screen quad vertex and index buffers
-    mQuadVBH = cbz::VertexBufferCreate(
-        layout, static_cast<uint32_t>(sQuadVertices.size()),
-        sQuadVertices.data());
+    mQuadVBH = cbz::VertexBufferCreate(layout, 4, sQuadVertices.data());
 
-    mQuadIBH = cbz::IndexBufferCreate(
-        CBZ_INDEX_FORMAT_UINT16, static_cast<uint32_t>(sQuadIndices.size()),
-        sQuadIndices.data());
+    mQuadIBH =
+        cbz::IndexBufferCreate(CBZ_INDEX_FORMAT_UINT16, 6, sQuadIndices.data());
 
     // Create blit texture
     mAlbedoTH =
@@ -150,7 +148,7 @@ public:
       cbz::TransformSet(glm::value_ptr(transform));
 
       // Submit to graphics target
-      cbz::Submit(0, mBlitPH);
+      cbz::Submit(CBZ_DEFAULT_RENDER_TARGET, mBlitPH);
     }
 
     mFrameCtr = cbz::Frame();
