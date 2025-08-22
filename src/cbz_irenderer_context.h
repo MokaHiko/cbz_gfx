@@ -141,7 +141,9 @@ struct Binding {
 struct ShaderProgramCommand {
   union {
     struct {
-      VertexBufferHandle vbh;
+      VertexBufferHandle vbhs[MAX_VERTEX_INPUT_BINDINGS];
+      uint32_t vbCount;
+      uint32_t instances;
       IndexBufferHandle ibh;
       GraphicsProgramHandle ph;
     } graphics;
@@ -153,7 +155,6 @@ struct ShaderProgramCommand {
   } program;
 
   CBZTargetType programType;
-
   std::vector<Binding> bindings;
 
   uint64_t sortKey = 0;
@@ -182,6 +183,9 @@ public:
   [[nodiscard]] virtual Result
   vertexBufferCreate(VertexBufferHandle vbh, const VertexLayout &vertexLayout,
                      uint32_t count, const void *data = nullptr) = 0;
+
+  virtual void vertexBufferUpdate(VertexBufferHandle vbh, uint32_t elementCount,
+                                  const void *data, uint32_t elementOffset) = 0;
 
   virtual void vertexBufferDestroy(VertexBufferHandle vbh) = 0;
 

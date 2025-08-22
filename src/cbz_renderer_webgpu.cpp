@@ -121,7 +121,7 @@ CheckAndCreateRequiredLimits(WGPUAdapter adapter) {
                  supportedLimits.limits.maxBindingsPerBindGroup);
 
   requiredLimits.limits.maxVertexAttributes = 5;
-  requiredLimits.limits.maxVertexBuffers = 1;
+  requiredLimits.limits.maxVertexBuffers = cbz::MAX_VERTEX_INPUT_BINDINGS;
   requiredLimits.limits.maxBufferSize = supportedLimits.limits.maxBufferSize;
   requiredLimits.limits.maxVertexBufferArrayStride = sizeof(float) * 64;
 
@@ -206,6 +206,7 @@ static void OnWorkDone(WGPUQueueWorkDoneStatus status, void *) {
   }
 }
 
+// TODO: Add offset
 static void AlignedWriteBufferWGPU(WGPUBuffer buffer, const void *data,
                                    uint32_t size) {
   // Split write if not aligned
@@ -237,6 +238,11 @@ public:
                                           const VertexLayout &vertexLayout,
                                           uint32_t count,
                                           const void *data) override;
+
+  void vertexBufferUpdate(VertexBufferHandle vbh, uint32_t elementCount,
+                          const void *data, uint32_t elementOffset) override {
+    sVertexBuffers[vbh.idx].update(data, elementCount, elementOffset);
+  }
 
   void vertexBufferDestroy(VertexBufferHandle vbh) override;
 
@@ -556,6 +562,15 @@ Result VertexBufferWebGPU::create(const VertexLayout &vertexLayout,
   return Result::eSuccess;
 };
 
+void VertexBufferWebGPU::update(const void *data, uint32_t elementCount,
+                                [[maybe_unused]] uint32_t elementOffset) {
+  uint32_t size = elementCount * mVertexLayout.stride;
+
+  if (data) {
+    AlignedWriteBufferWGPU(mBuffer, data, size);
+  }
+}
+
 Result VertexBufferWebGPU::bind(WGPURenderPassEncoder renderPassEncoder,
                                 uint32_t slot) const {
   wgpuRenderPassEncoderSetVertexBuffer(renderPassEncoder, slot, mBuffer, 0,
@@ -804,6 +819,19 @@ void TextureWebGPU::update(void *data, uint32_t count) {
   destination.texture = mTexture;
   destination.mipLevel = 0;
   destination.origin = {0, 0, 0};
+
+  switch (getFormat()) {
+  case WGPUTextureFormat_Depth16Unorm:
+  case WGPUTextureFormat_Depth24Plus:
+  case WGPUTextureFormat_Depth24PlusStencil8:
+  case WGPUTextureFormat_Depth32Float:
+  case WGPUTextureFormat_Depth32FloatStencil8: {
+    destination.aspect = WGPUTextureAspect_DepthOnly;
+  } break;
+  default: {
+    destination.aspect = WGPUTextureAspect_All;
+  } break;
+  }
   destination.aspect = WGPUTextureAspect_All;
 
   WGPUTextureDataLayout dataLayout = {};
@@ -1208,67 +1236,6 @@ Result ShaderWebGPU::create(const std::string &path, CBZShaderFlags flags) {
     }
   }
 
-  std::vector<WGPUBindGroupLayoutEntry> bindingEntries(getBindings().size());
-
-  for (size_t i = 0; i < bindingEntries.size(); i++) {
-    bindingEntries[i] = {};
-    bindingEntries[i].binding = mBindingDescs[i].index;
-    bindingEntries[i].visibility = getShaderStages();
-
-    const BindingDesc &bindingDesc = getBindings()[i];
-    switch (bindingDesc.type) {
-    case BindingType::eUniformBuffer:
-      bindingEntries[i].buffer.type = WGPUBufferBindingType_Uniform;
-      bindingEntries[i].buffer.nextInChain = nullptr;
-      bindingEntries[i].buffer.hasDynamicOffset = false;
-      bindingEntries[i].buffer.minBindingSize =
-          bindingDesc.size + bindingDesc.padding;
-      break;
-
-    case BindingType::eRWStructuredBuffer:
-    case BindingType::eStructuredBuffer:
-      bindingEntries[i].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
-      if (mBindingDescs[i].type == BindingType::eRWStructuredBuffer) {
-        bindingEntries[i].buffer.type = WGPUBufferBindingType_Storage;
-      }
-
-      bindingEntries[i].buffer.nextInChain = nullptr;
-      bindingEntries[i].buffer.hasDynamicOffset = false;
-      break;
-
-    case BindingType::eSampler:
-      bindingEntries[i].sampler.nextInChain = nullptr;
-      bindingEntries[i].sampler.type = WGPUSamplerBindingType_Filtering;
-      break;
-
-    case BindingType::eTexture2D:
-      bindingEntries[i].texture.nextInChain = nullptr;
-      bindingEntries[i].texture.sampleType = WGPUTextureSampleType_Float;
-      bindingEntries[i].texture.viewDimension = WGPUTextureViewDimension_2D;
-      break;
-
-    case BindingType::eTextureCube:
-      bindingEntries[i].texture.nextInChain = nullptr;
-      bindingEntries[i].texture.sampleType = WGPUTextureSampleType_Float;
-      bindingEntries[i].texture.viewDimension = WGPUTextureViewDimension_Cube;
-      break;
-
-    case BindingType::eNone:
-      sLogger->error("Unsupported binding type <{}> for {}",
-                     (uint32_t)getBindings()[i].type);
-      break;
-    }
-  }
-
-  WGPUBindGroupLayoutDescriptor bindGroupLayoutDesc = {};
-  bindGroupLayoutDesc.nextInChain = nullptr;
-  bindGroupLayoutDesc.label = path.c_str();
-  bindGroupLayoutDesc.entryCount = static_cast<uint32_t>(bindingEntries.size());
-  bindGroupLayoutDesc.entries = bindingEntries.data();
-
-  mBindGroupLayout =
-      wgpuDeviceCreateBindGroupLayout(sDevice, &bindGroupLayoutDesc);
-
   WGPUShaderModuleDescriptor shaderModuleDesc{};
 
   shaderModuleDesc.label = path.c_str();
@@ -1324,36 +1291,162 @@ Result ShaderWebGPU::create(const std::string &path, CBZShaderFlags flags) {
   return Result::eSuccess;
 }
 
+WGPUBindGroupLayout
+ShaderWebGPU::findOrCreateBindGroupLayout(const Binding *bindings,
+                                          uint32_t bindingCount) {
+  uint32_t hash;
+  MurmurHash3_x86_32(bindings, sizeof(Binding) * bindingCount, 0, &hash);
+
+  if (mBindGroupLayouts.find(hash) != mBindGroupLayouts.end()) {
+    return mBindGroupLayouts[hash];
+  }
+
+  std::vector<WGPUBindGroupLayoutEntry> bindingEntries(getBindings().size());
+
+  for (size_t i = 0; i < bindingEntries.size(); i++) {
+    bindingEntries[i] = {};
+    bindingEntries[i].binding = mBindingDescs[i].index;
+    bindingEntries[i].visibility = getShaderStages();
+
+    const BindingDesc &bindingDesc = getBindings()[i];
+    switch (bindingDesc.type) {
+    case BindingType::eUniformBuffer:
+      bindingEntries[i].buffer.type = WGPUBufferBindingType_Uniform;
+      bindingEntries[i].buffer.nextInChain = nullptr;
+      bindingEntries[i].buffer.hasDynamicOffset = false;
+      bindingEntries[i].buffer.minBindingSize =
+          bindingDesc.size + bindingDesc.padding;
+      break;
+
+    case BindingType::eRWStructuredBuffer:
+    case BindingType::eStructuredBuffer:
+      bindingEntries[i].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+      if (mBindingDescs[i].type == BindingType::eRWStructuredBuffer) {
+        bindingEntries[i].buffer.type = WGPUBufferBindingType_Storage;
+      }
+
+      bindingEntries[i].buffer.nextInChain = nullptr;
+      bindingEntries[i].buffer.hasDynamicOffset = false;
+      break;
+
+    case BindingType::eSampler:
+      bindingEntries[i].sampler.nextInChain = nullptr;
+      bindingEntries[i].sampler.type = WGPUSamplerBindingType_Filtering;
+      break;
+
+    case BindingType::eTexture2D: {
+      bindingEntries[i].texture.nextInChain = nullptr;
+      bindingEntries[i].texture.viewDimension = WGPUTextureViewDimension_2D;
+      for (uint32_t bindingIndex = 0; bindingIndex < bindingCount;
+           bindingIndex++) {
+        if (bindings[bindingIndex].type != BindingType::eTexture2D ||
+            bindings[bindingIndex].value.texture.slot != bindingDesc.index) {
+          continue;
+        }
+
+        switch (sTextures[bindings[bindingIndex].value.texture.handle.idx]
+                    .getFormat()) {
+        case WGPUTextureFormat_Depth16Unorm:
+        case WGPUTextureFormat_Depth24Plus:
+        case WGPUTextureFormat_Depth24PlusStencil8:
+        case WGPUTextureFormat_Depth32Float:
+        case WGPUTextureFormat_Depth32FloatStencil8: {
+          bindingEntries[i].texture.sampleType = WGPUTextureSampleType_Depth;
+          bindingEntries[i].texture.sampleType = WGPUTextureSampleType_Float;
+        } break;
+
+        default: {
+          bindingEntries[i].texture.sampleType = WGPUTextureSampleType_Float;
+        } break;
+        }
+
+        break;
+      }
+    } break;
+
+    case BindingType::eTextureCube: {
+      bindingEntries[i].texture.nextInChain = nullptr;
+      bindingEntries[i].texture.viewDimension = WGPUTextureViewDimension_Cube;
+
+      for (uint32_t bindingIndex = 0; bindingIndex < bindingCount;
+           bindingIndex++) {
+        if (bindings[bindingIndex].type != BindingType::eTextureCube ||
+            bindings[bindingIndex].value.texture.slot != bindingDesc.index) {
+          continue;
+        }
+
+        switch (sTextures[bindings[bindingIndex].value.texture.handle.idx]
+                    .getFormat()) {
+        case WGPUTextureFormat_Depth16Unorm:
+        case WGPUTextureFormat_Depth24Plus:
+        case WGPUTextureFormat_Depth24PlusStencil8:
+        case WGPUTextureFormat_Depth32Float:
+        case WGPUTextureFormat_Depth32FloatStencil8: {
+          bindingEntries[i].texture.sampleType = WGPUTextureSampleType_Depth;
+        } break;
+
+        default: {
+          bindingEntries[i].texture.sampleType = WGPUTextureSampleType_Float;
+        } break;
+        }
+
+        break;
+      }
+    } break;
+
+    case BindingType::eNone:
+      sLogger->error("Unsupported binding type <{}> for {}",
+                     (uint32_t)getBindings()[i].type);
+      break;
+    }
+  }
+
+  WGPUBindGroupLayoutDescriptor bindGroupLayoutDesc = {};
+  bindGroupLayoutDesc.nextInChain = nullptr;
+  // bindGroupLayoutDesc.label = path.c_str();
+  bindGroupLayoutDesc.entryCount = static_cast<uint32_t>(bindingEntries.size());
+  bindGroupLayoutDesc.entries = bindingEntries.data();
+
+  return mBindGroupLayouts[hash] =
+             wgpuDeviceCreateBindGroupLayout(sDevice, &bindGroupLayoutDesc);
+}
+
 void ShaderWebGPU::destroy() {
   wgpuShaderModuleRelease(mModule);
   mModule = NULL;
 }
 
 Result GraphicsProgramWebGPU::create(ShaderHandle sh, int flags,
-                                     const std::string &name) {
+                                     [[maybe_unused]] const std::string &name) {
   mShaderHandle = sh;
-
   mFlags = flags;
-
-  std::string layoutName = std::string(name) + std::string("Layout");
-  WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
-  pipelineLayoutDesc.nextInChain = nullptr;
-  pipelineLayoutDesc.label = layoutName.c_str();
-  pipelineLayoutDesc.bindGroupLayoutCount = 1;
-  pipelineLayoutDesc.bindGroupLayouts =
-      &sShaders[mShaderHandle.idx].getBindGroupLayout();
-  mPipelineLayout =
-      wgpuDeviceCreatePipelineLayout(sDevice, &pipelineLayoutDesc);
 
   return Result::eSuccess;
 }
 
-WGPURenderPipeline
-GraphicsProgramWebGPU::findOrCreatePipeline(const RenderTarget &target) {
+WGPURenderPipeline GraphicsProgramWebGPU::findOrCreatePipeline(
+    const RenderTarget &target, WGPUBindGroupLayout bindGroupLayout,
+    const VertexBufferHandle *vbhs, uint32_t vbCount) {
   uint32_t pipelineId;
-  MurmurHash3_x86_32(target.colorAttachments.data(),
-                     static_cast<uint32_t>(target.colorAttachments.size()),
-                     (uint32_t)(target.depthAttachment.imgh.idx), &pipelineId);
+
+  struct PipelineKey {
+    int colorFlags[MAX_TARGET_COLOR_ATTACHMENTS];
+    cbz::ImageHandle color[MAX_TARGET_COLOR_ATTACHMENTS];
+    int depthFlags;
+    cbz::ImageHandle depth;
+  } key = {};
+
+  for (size_t i = 0; i < target.colorAttachments.size(); i++) {
+    key.color[i] = target.colorAttachments[i].imgh;
+    key.colorFlags[i] = target.colorAttachments[i].flags;
+  }
+
+  if (target.depthAttachment.imgh.idx != CBZ_INVALID_HANDLE) {
+    key.depth = target.depthAttachment.imgh;
+    key.depthFlags = target.depthAttachment.flags;
+  }
+
+  MurmurHash3_x86_32(&key, sizeof(PipelineKey), 0, &pipelineId);
 
   if (auto it = mPipelines.find(pipelineId); it != mPipelines.end()) {
     return it->second;
@@ -1361,20 +1454,31 @@ GraphicsProgramWebGPU::findOrCreatePipeline(const RenderTarget &target) {
 
   const ShaderWebGPU *shader = &sShaders[mShaderHandle.idx];
 
+  WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
+  pipelineLayoutDesc.nextInChain = nullptr;
+  pipelineLayoutDesc.label = nullptr;
+  pipelineLayoutDesc.bindGroupLayoutCount = 1;
+  pipelineLayoutDesc.bindGroupLayouts = &bindGroupLayout;
+
+  WGPUPipelineLayout pipelineLayout = mPipelineLayouts[pipelineId] =
+      wgpuDeviceCreatePipelineLayout(sDevice, &pipelineLayoutDesc);
+
   WGPURenderPipelineDescriptor pipelineDesc = {};
   pipelineDesc.nextInChain = nullptr;
-  // pipelineDesc.label = name.c_str();
-  pipelineDesc.layout = mPipelineLayout;
+  pipelineDesc.layout = pipelineLayout;
 
-  WGPUVertexBufferLayout vertexBufferLayout = {};
-  vertexBufferLayout.arrayStride = shader->getVertexLayout().stride;
-  vertexBufferLayout.stepMode =
-      static_cast<WGPUVertexStepMode>(shader->getVertexLayout().stepMode);
-  vertexBufferLayout.attributeCount =
-      shader->getVertexLayout().attributes.size();
-  vertexBufferLayout.attributes =
-      (WGPUVertexAttribute const *)(shader->getVertexLayout()
-                                        .attributes.data());
+  WGPUVertexBufferLayout vbLayouts[MAX_VERTEX_INPUT_BINDINGS] = {};
+
+  for (uint32_t vbIdx = 0; vbIdx < vbCount; vbIdx++) {
+    const VertexBufferWebGPU *vb = &sVertexBuffers[vbhs[vbIdx].idx];
+    vbLayouts[vbIdx].arrayStride = vb->getVertexLayout().stride;
+    vbLayouts[vbIdx].stepMode =
+        static_cast<WGPUVertexStepMode>(vb->getVertexLayout().stepMode);
+    vbLayouts[vbIdx].attributeCount = vb->getVertexLayout().attributes.size();
+
+    vbLayouts[vbIdx].attributes =
+        (WGPUVertexAttribute const *)(vb->getVertexLayout().attributes.data());
+  }
 
   WGPUVertexState vertexState = {};
   vertexState.nextInChain = nullptr;
@@ -1382,8 +1486,8 @@ GraphicsProgramWebGPU::findOrCreatePipeline(const RenderTarget &target) {
   vertexState.entryPoint = "vertexMain";
   vertexState.constantCount = 0;
   vertexState.constants = nullptr;
-  vertexState.bufferCount = 1;
-  vertexState.buffers = &vertexBufferLayout;
+  vertexState.bufferCount = vbCount;
+  vertexState.buffers = vbLayouts;
   pipelineDesc.vertex = vertexState;
 
   WGPUPrimitiveState primitiveState = {};
@@ -1417,6 +1521,13 @@ GraphicsProgramWebGPU::findOrCreatePipeline(const RenderTarget &target) {
     depthStencilState.nextInChain = nullptr;
     depthStencilState.format = depthTexture.getFormat();
     depthStencilState.depthWriteEnabled = true;
+
+    if ((target.depthAttachment.flags &
+         CBZ_RENDER_ATTACHMENT_DEPTH_WRITE_DISABLE) ==
+        CBZ_RENDER_ATTACHMENT_DEPTH_WRITE_DISABLE) {
+      depthStencilState.depthWriteEnabled = false;
+    }
+
     depthStencilState.depthCompare = WGPUCompareFunction_LessEqual;
 
     depthStencilState.stencilReadMask = 0xFFFFFFFF;
@@ -1496,22 +1607,22 @@ GraphicsProgramWebGPU::findOrCreatePipeline(const RenderTarget &target) {
     pipelineDesc.fragment = nullptr;
   }
 
-  return mPipelines[pipelineId] = mPipeline =
+  return mPipelines[pipelineId] =
              wgpuDeviceCreateRenderPipeline(sDevice, &pipelineDesc);
 }
 
 void GraphicsProgramWebGPU::destroy() {
-  if (!mPipeline) {
-    sLogger->warn("Attempting to destroy invalid graphics program!");
-    return;
+  for (auto it : mPipelineLayouts) {
+    wgpuPipelineLayoutRelease(it.second);
   }
 
-  if (mPipelineLayout) {
-    wgpuPipelineLayoutRelease(mPipelineLayout);
+  mPipelineLayouts.clear();
+
+  for (auto it : mPipelines) {
+    wgpuRenderPipelineRelease(it.second);
   }
 
-  wgpuRenderPipelineRelease(mPipeline);
-  mPipeline = NULL;
+  mPipelines.clear();
 }
 
 Result ComputeProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
@@ -1531,7 +1642,7 @@ Result ComputeProgramWebGPU::create(ShaderHandle sh, const std::string &name) {
   pipelineLayoutDesc.nextInChain = nullptr;
   pipelineLayoutDesc.label = layoutName.c_str();
   pipelineLayoutDesc.bindGroupLayoutCount = 1;
-  pipelineLayoutDesc.bindGroupLayouts = &shader->getBindGroupLayout();
+  // pipelineLayoutDesc.bindGroupLayouts = &shader->getBindGroupLayout();
 
   mPipelineLayout =
       wgpuDeviceCreatePipelineLayout(sDevice, &pipelineLayoutDesc);
@@ -1899,6 +2010,12 @@ uint32_t RendererContextWebGPU::submitSorted(
                             .arrayLayerCount);
 
             colorAttachments[colorAttachmentIdx].loadOp = WGPULoadOp_Clear;
+
+            if ((renderTarget.colorAttachments[colorAttachmentIdx].flags) &
+                CBZ_RENDER_ATTACHMENT_LOAD) {
+              colorAttachments[colorAttachmentIdx].loadOp = WGPULoadOp_Load;
+            }
+
             colorAttachments[colorAttachmentIdx].storeOp = WGPUStoreOp_Store;
             colorAttachments[colorAttachmentIdx].clearValue = {0.0f, 0.0f, 0.0f,
                                                                1.0f};
@@ -1909,7 +2026,13 @@ uint32_t RendererContextWebGPU::submitSorted(
             depthStencilAttachment.view =
                 sTextures[renderTarget.depthAttachment.imgh.idx]
                     .findOrCreateTextureView(WGPUTextureAspect_DepthOnly);
+
             depthStencilAttachment.depthLoadOp = WGPULoadOp_Clear;
+            if ((renderTarget.depthAttachment.flags) &
+                CBZ_RENDER_ATTACHMENT_LOAD) {
+              depthStencilAttachment.depthLoadOp = WGPULoadOp_Load;
+            }
+
             depthStencilAttachment.depthStoreOp = WGPUStoreOp_Store;
             depthStencilAttachment.depthClearValue = 1.0f;
             depthStencilAttachment.depthReadOnly = false;
@@ -2014,31 +2137,43 @@ uint32_t RendererContextWebGPU::submitSorted(
         GraphicsProgramWebGPU &graphicsProgram =
             sGraphicsPrograms[renderCmd.program.graphics.ph.idx];
 
-        const VertexBufferWebGPU &vb =
-            sVertexBuffers[renderCmd.program.graphics.vbh.idx];
+        // const VertexBufferWebGPU &vb =
+        //     sVertexBuffers[renderCmd.program.graphics.vbh.idx];
+        //
+        // if (sShaders[graphicsProgram.getShader().idx].getVertexLayout() !=
+        //     vb.getVertexLayout()) {
+        //   // TODO: Handle multiple vertexBuffers
+        //   sLogger->warn(
+        //       "Incompatible vertex buffer and program layout for '{}'",
+        //       HandleProvider<GraphicsProgramHandle>::getName(
+        //           renderCmd.program.graphics.ph));
+        //   sLogger->warn("Discarding draw...");
+        //   continue;
+        // }
+        //
 
-        if (sShaders[graphicsProgram.getShader().idx].getVertexLayout() !=
-            vb.getVertexLayout()) {
-          // sLogger->warn(
-          //     "Incompatible vertex buffer and program layout for '{}'",
-          //     HandleProvider<GraphicsProgramHandle>::getName(
-          //         renderCmd.program.graphics.ph));
-          // sLogger->warn("Discarding draw...");
-          continue;
-        }
+        WGPUBindGroupLayout bindGroupLayout =
+            sShaders[graphicsProgram.getShader().idx]
+                .findOrCreateBindGroupLayout(
+                    renderCmd.bindings.data(),
+                    static_cast<uint32_t>(renderCmd.bindings.size()));
 
         WGPURenderPipeline renderPipeline = nullptr;
         if (renderCmd.target != CBZ_DEFAULT_RENDER_TARGET) {
           renderPipeline = graphicsProgram.findOrCreatePipeline(
-              renderTargets[renderCmd.target]);
+              renderTargets[renderCmd.target], bindGroupLayout,
+              renderCmd.program.graphics.vbhs,
+              renderCmd.program.graphics.vbCount);
         } else {
           // Surface render target
           static RenderTarget sSurfaceRenderTarget{};
           sSurfaceRenderTarget.colorAttachments.resize(1);
           sSurfaceRenderTarget.colorAttachments[0].imgh = sSurfaceIMGH;
 
-          renderPipeline =
-              graphicsProgram.findOrCreatePipeline(sSurfaceRenderTarget);
+          renderPipeline = graphicsProgram.findOrCreatePipeline(
+              sSurfaceRenderTarget, bindGroupLayout,
+              renderCmd.program.graphics.vbhs,
+              renderCmd.program.graphics.vbCount);
         }
 
         if (!renderPipeline) {
@@ -2064,11 +2199,14 @@ uint32_t RendererContextWebGPU::submitSorted(
                              renderCmd.program.graphics.ph));
         }
 
-        if (vb.bind(renderPassEncoder) != Result::eSuccess) {
-          continue;
-        };
-
-        vertexCount = vb.getVertexCount();
+        // Bind all vertex buffers
+        for (uint32_t vbIdx = 0; vbIdx < renderCmd.program.graphics.vbCount;
+             vbIdx++) {
+          if (sVertexBuffers[renderCmd.program.graphics.vbhs[vbIdx].idx].bind(
+                  renderPassEncoder, vbIdx) != Result::eSuccess) {
+            spdlog::error("Failed to bind vertex buffer!");
+          };
+        }
 
         if (renderCmd.program.graphics.ibh.idx != CBZ_INVALID_HANDLE) {
           const IndexBufferWebGPU &ib =
@@ -2087,11 +2225,19 @@ uint32_t RendererContextWebGPU::submitSorted(
       };
 
       if (isIndexed) {
-        wgpuRenderPassEncoderDrawIndexed(renderPassEncoder, indexCount, 1, 0, 0,
-                                         renderCmd.submissionID);
+        if (renderCmd.program.graphics.instances > 1) {
+          wgpuRenderPassEncoderDrawIndexed(renderPassEncoder, indexCount,
+                                           renderCmd.program.graphics.instances,
+                                           0, 0, 0);
+        } else {
+          wgpuRenderPassEncoderDrawIndexed(renderPassEncoder, indexCount,
+                                           renderCmd.program.graphics.instances,
+                                           0, 0, renderCmd.submissionID);
+        }
       } else {
         wgpuRenderPassEncoderDraw(renderPassEncoder, vertexCount, 1, 0,
                                   renderCmd.submissionID);
+        spdlog::error("Non indexed drawing unsupported!");
       }
     } break;
 
@@ -2381,198 +2527,16 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
     return nullptr;
   }
 
-  const ShaderWebGPU *shader = &sShaders[sh.idx];
-  const std::vector<BindingDesc> &shaderBindingDescs = shader->getBindings();
+  const std::vector<BindingDesc> &shaderBindingDescs =
+      sShaders[sh.idx].getBindings();
 
   if (sBindingGroups.find(descriptorHash) == sBindingGroups.end()) {
 
     WGPUBindGroupDescriptor bindGroupDesc = {};
     bindGroupDesc.nextInChain = nullptr;
     bindGroupDesc.label = nullptr;
-    bindGroupDesc.layout = shader->getBindGroupLayout();
-
-    // std::vector<WGPUBindGroupEntry> bindGroupEntries(
-    //     shader->getBindings().size());
-    // for (uint32_t i = 0; i <
-    // static_cast<uint32_t>(shaderBindingDescs.size());
-    //      i++) {
-    //   switch (bindings[i].type) {
-    //   case BindingType::eUniformBuffer: {
-    //     UniformHandle uh = bindings[i].value.uniformBuffer.handle;
-    //
-    //     const auto &it =
-    //         std::find_if(shaderBindingDescs.begin(),
-    //         shaderBindingDescs.end(),
-    //                      [=](const BindingDesc &bindingDesc) {
-    //                        return bindingDesc.name ==
-    //                               HandleProvider<UniformHandle>::getName(uh);
-    //                      });
-    //
-    //     if (it == shaderBindingDescs.end()) {
-    //       sLogger->error(
-    //           "Shader program '{}' has no uniform binding named '{}'",
-    //           HandleProvider<ShaderHandle>::getName(sh),
-    //           HandleProvider<UniformHandle>::getName(uh));
-    //       return nullptr;
-    //     }
-    //
-    //     if (it->elementSize + it->padding >
-    //     sUniformBuffers[uh.idx].getSize()) {
-    //       sLogger->error("Uniform '{}' size too small (< {} bytes); requires
-    //       "
-    //                      "64. Increase elementCount.",
-    //                      HandleProvider<UniformHandle>::getName(uh),
-    //                      sUniformBuffers[uh.idx].getSize(), it->elementSize);
-    //       return nullptr;
-    //     }
-    //
-    //     if (it->elementSize + it->padding <
-    //     sUniformBuffers[uh.idx].getSize()) {
-    //       sLogger->warn("Uniform '{}' size larger than (< {} bytes); requires
-    //       "
-    //                     "{}. Mismatch or unused in shader binding!",
-    //                     HandleProvider<UniformHandle>::getName(uh),
-    //                     sUniformBuffers[uh.idx].getSize(), it->elementSize);
-    //     }
-    //
-    //     bindGroupEntries[i] =
-    //         sUniformBuffers[uh.idx].createBindGroupEntry(it->index);
-    //   } break;
-    //
-    //   case BindingType::eRWStructuredBuffer:
-    //   case BindingType::eStructuredBuffer: {
-    //     switch (bindings[i].value.storageBuffer.valueType) {
-    //     case CBZ_UNIFORM_TYPE_UINT:
-    //     case CBZ_UNIFORM_TYPE_VEC4:
-    //     case CBZ_UNIFORM_TYPE_MAT4: {
-    //       StructuredBufferHandle sbh =
-    //       bindings[i].value.storageBuffer.handle;
-    //
-    //       const auto &it =
-    //           std::find_if(shaderBindingDescs.begin(),
-    //           shaderBindingDescs.end(),
-    //                        [&](const BindingDesc &bindingDesc) {
-    //                          return bindingDesc.index ==
-    //                                 bindings[i].value.storageBuffer.slot;
-    //                        });
-    //
-    //       if (it == shaderBindingDescs.end()) {
-    //         sLogger->error(
-    //             "Bound program has no storage binding named {}",
-    //             HandleProvider<StructuredBufferHandle>::getName(sbh));
-    //         return nullptr;
-    //       }
-    //
-    //       bindGroupEntries[i] =
-    //           sStorageBuffers[sbh.idx].createBindGroupEntry(it->index);
-    //     } break;
-    //
-    //     default:
-    //       sLogger->error("Unsupported storage buffer ShaderValueType!");
-    //       break;
-    //     }
-    //   } break;
-    //
-    //   case BindingType::eTexture2D: {
-    //     ImageHandle th = bindings[i].value.texture.handle;
-    //
-    //     const auto &it = std::find_if(
-    //         shaderBindingDescs.begin(), shaderBindingDescs.end(),
-    //         [=](const BindingDesc &bindingDesc) {
-    //           return bindingDesc.index == bindings[i].value.texture.slot;
-    //         });
-    //
-    //     if (it == shaderBindingDescs.end()) {
-    //       sLogger->error(
-    //           "Shader program '{}' has no uniform binding named '{}'",
-    //           HandleProvider<ShaderHandle>::getName(sh),
-    //           HandleProvider<ImageHandle>::getName(th));
-    //       return nullptr;
-    //     }
-    //
-    //     if (it->type != BindingType::eTexture2D) {
-    //       sLogger->error(
-    //           "Bound program has uniform binding type mismatch for '{}'",
-    //           HandleProvider<ImageHandle>::getName(th));
-    //       return nullptr;
-    //     }
-    //
-    //     bindGroupEntries[i].nextInChain = nullptr;
-    //     bindGroupEntries[i].binding = it->index;
-    //     bindGroupEntries[i].offset = 0;
-    //     bindGroupEntries[i].textureView =
-    //         sTextures[th.idx].findOrCreateTextureView(
-    //             WGPUTextureAspect_All, 0, 1, CBZ_TEXTURE_VIEW_DIMENSION_2D);
-    //   } break;
-    //
-    //   case BindingType::eTextureCube: {
-    //     ImageHandle th = bindings[i].value.texture.handle;
-    //
-    //     const auto &it = std::find_if(
-    //         shaderBindingDescs.begin(), shaderBindingDescs.end(),
-    //         [=](const BindingDesc &bindingDesc) {
-    //           return bindingDesc.index == bindings[i].value.texture.slot;
-    //         });
-    //
-    //     if (it->type != BindingType::eTextureCube) {
-    //       sLogger->error(
-    //           "Bound program has uniform binding type mismatch for '{}'",
-    //           HandleProvider<ImageHandle>::getName(th));
-    //       return nullptr;
-    //     }
-    //
-    //     if (it == shaderBindingDescs.end()) {
-    //       sLogger->error(
-    //           "Shader program '{}' has no uniform binding named '{}'",
-    //           HandleProvider<ShaderHandle>::getName(sh),
-    //           HandleProvider<ImageHandle>::getName(th));
-    //       return nullptr;
-    //     }
-    //
-    //     bindGroupEntries[i].nextInChain = nullptr;
-    //     bindGroupEntries[i].binding = it->index;
-    //     bindGroupEntries[i].offset = 0;
-    //
-    //     bindGroupEntries[i].textureView =
-    //         sTextures[th.idx].findOrCreateTextureView(
-    //             WGPUTextureAspect_All, 0, 6,
-    //             CBZ_TEXTURE_VIEW_DIMENSION_CUBE);
-    //   } break;
-    //
-    //   case BindingType::eSampler: {
-    //     SamplerHandle smplerHandle = bindings[i].value.sampler.handle;
-    //
-    //     const auto &it = std::find_if(
-    //         shaderBindingDescs.begin(), shaderBindingDescs.end(),
-    //         [=](const BindingDesc &bindingDesc) {
-    //           return bindingDesc.index == bindings[i].value.sampler.slot;
-    //         });
-    //
-    //     if (it->type != BindingType::eSampler) {
-    //       sLogger->error("Shader program '{}' has type mismatch",
-    //                      HandleProvider<ShaderHandle>::getName(sh));
-    //       return nullptr;
-    //     }
-    //
-    //     if (it == shaderBindingDescs.end()) {
-    //       sLogger->error(
-    //           "Shader program '{}' has no uniform binding of type <Sampler>",
-    //           HandleProvider<ShaderHandle>::getName(sh));
-    //       return nullptr;
-    //     }
-    //
-    //     WGPUBindGroupEntry entry = {};
-    //     entry.binding = it->index;
-    //     entry.nextInChain = nullptr;
-    //     entry.sampler = sSamplers[smplerHandle.idx];
-    //     bindGroupEntries[i] = entry;
-    //   } break;
-    //
-    //   case BindingType::eNone: {
-    //     sLogger->error("Uknown and unsupported binding!");
-    //   } break;
-    //   }
-    // }
+    bindGroupDesc.layout =
+        sShaders[sh.idx].findOrCreateBindGroupLayout(bindings, bindingCount);
 
     std::vector<WGPUBindGroupEntry> bindGroupEntries;
     for (const BindingDesc &bindingDesc : shaderBindingDescs) {
@@ -2599,9 +2563,7 @@ WGPUBindGroup RendererContextWebGPU::findOrCreateBindGroup(
         if (!binding) {
           sLogger->error(
               "Shader program '{}' has no uniform binding named '{}'",
-              HandleProvider<ShaderHandle>::getName(sh),
-              HandleProvider<UniformHandle>::getName(
-                  binding->value.uniformBuffer.handle));
+              HandleProvider<ShaderHandle>::getName(sh), bindingDesc.name);
           return nullptr;
         }
 

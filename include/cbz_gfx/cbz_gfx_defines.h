@@ -61,6 +61,7 @@ typedef enum {
   // eWeights,
   //
   // eCustom,
+  CBZ_VERTEX_ATTRIBUTE_CUSTOM,
   CBZ_VERTEX_ATTRIBUTE_COUNT,
   CBZ_VERTEX_ATTRIBUTE_FORCE_32 = 0xFFFFFFFFu,
 } CBZVertexAttributeType;
@@ -191,7 +192,9 @@ typedef enum {
 
   CBZ_RENDER_ATTACHMENT_BLEND = 1 << 0,
 
-  // CBZ_RENDER_ATTACHMENT_BLEND = 1 << 1,
+  CBZ_RENDER_ATTACHMENT_DEPTH_WRITE_DISABLE = 1 << 1,
+
+  CBZ_RENDER_ATTACHMENT_LOAD = 1 << 2, // Keep contents of attachment
 } CBZRenderAttachmentFlags;
 
 // @note one to one mapping with 'WGPUTextureDimension'
@@ -298,10 +301,11 @@ constexpr uint8_t CBZ_INVALID_RENDER_TARGET = UINT8_MAX;
 namespace cbz {
 typedef enum : uint32_t {
   MAX_TARGETS = 128,
+  MAX_VERTEX_INPUT_BINDINGS = 4,
   MAX_TARGET_COLOR_ATTACHMENTS = 4,
   MAX_COMMAND_SUBMISSIONS = 512,
   MAX_COMMAND_TEXTURES = 32,
-  MAX_COMMAND_BINDINGS = 16,
+  MAX_COMMAND_BINDINGS = 24,
   COPY_BYTES_PER_ROW_ALIGNMENT = 256,
 } CBZRendererLimits;
 
@@ -353,6 +357,19 @@ CBZ_NO_DISCARD constexpr uint32_t VertexFormatGetSize(CBZVertexFormat format) {
     return 16;
 
   default:
+    return 0;
+  }
+}
+
+CBZ_NO_DISCARD constexpr uint32_t IndexFormatGetSize(CBZIndexFormat format) {
+  switch (format) {
+  case CBZ_INDEX_FORMAT_UINT16:
+    return 2;
+
+  case CBZ_INDEX_FORMAT_UINT32:
+    return 4;
+
+  case CBZ_INDEX_FORMAT_UNDEFINED:
     return 0;
   }
 }
@@ -541,12 +558,18 @@ namespace cbz {
 class CBZ_API VertexLayout {
 public:
   void begin(CBZVertexStepMode mode);
-  void push_attribute(CBZVertexAttributeType type, CBZVertexFormat format);
+  void push_attribute(CBZVertexAttributeType type, CBZVertexFormat format,
+                      uint32_t locationOffset = 0);
   void end();
 
   bool operator==(const VertexLayout &other) const;
   bool operator!=(const VertexLayout &other) const;
 
+  inline uint32_t getAttributeCount() const {
+    return static_cast<uint32_t>(attributes.size());
+  };
+
+  // TODO: Change to max vertex attributes
   std::vector<VertexAttribute> attributes;
   CBZVertexStepMode stepMode = CBZ_VERTEX_STEP_MODE_VERTEX;
   uint32_t stride = 0;

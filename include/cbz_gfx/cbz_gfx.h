@@ -18,12 +18,14 @@ struct CBZ_API InitDesc {
 
 CBZ_API Result Init(InitDesc initDesc);
 
-CBZ_API VertexBufferHandle VertexBufferCreate(const VertexLayout &vertexLayout,
-                                              uint32_t vertexCount,
-                                              const void *data = nullptr,
-                                              const char *name = "");
+CBZ_NO_DISCARD CBZ_API VertexBufferHandle
+VertexBufferCreate(const VertexLayout &vertexLayout, uint32_t vertexCount,
+                   const void *data = nullptr, const char *name = "");
 
-CBZ_API void VertexBufferSet(VertexBufferHandle vbh);
+CBZ_API void VertexBufferUpdate(VertexBufferHandle vbh, uint32_t elementCount,
+                                const void *data, uint32_t offset = 0);
+
+CBZ_API void VertexBufferSet(VertexBufferHandle vbh, uint32_t instances = 1);
 
 CBZ_API void VertexBufferDestroy(VertexBufferHandle vbh);
 
@@ -306,11 +308,24 @@ struct CBZ_API MousePosition {
 [[nodiscard]] CBZ_API CBZBool32 IsMouseButtonPressed(MouseButton mouseButton);
 
 }; // namespace cbz
-//
+
+// Input defines
+typedef enum {
+  CBZ_INPUT_MODE_CURSOR_NORMAL = 0x00034001,
+  CBZ_INPUT_MODE_CURSOR_HIDDEN = 0x00034002,
+  CBZ_INPUT_MODE_CURSOR_DISABLE = 0x00034003
+} CBZInputMode;
+
+namespace cbz {
+
+CBZ_API void SetInputMode(CBZInputMode inputMode);
+
+}; // namespace cbz
+
 namespace cbz::input {
 
 enum class Axis {
-  MouseX,
+  MouseX = 0,
   MouseY,
 };
 

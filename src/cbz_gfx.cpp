@@ -33,6 +33,12 @@ static std::array<CBZBool32, static_cast<uint32_t>(MouseButton::eCount)>
 static MousePosition sMousePosition = {0, 0};
 static double sMouseDeltaX = 0.0;
 static double sMouseDeltaY = 0.0;
+static double sMouseScrollDeltaX = 0.0;
+static double sMouseScrollDeltaY = 0.0;
+
+void SetInputMode(CBZInputMode inputMode) {
+  glfwSetInputMode(sWindow, GLFW_CURSOR, inputMode);
+}
 
 static void InputKeyCallback(GLFWwindow *, int key, int, int action, int) {
   if (key == GLFW_KEY_UNKNOWN)
@@ -53,6 +59,7 @@ static void MouseButtonCallback(GLFWwindow *, int button, int action,
     sMouseButtonMap[button] = false;
   }
 }
+
 static void MouseMoveCallback(GLFWwindow *, double xpos, double ypos) {
   sMouseDeltaX = xpos - static_cast<double>(sMousePosition.x);
   sMouseDeltaY = ypos - static_cast<double>(sMousePosition.y);
@@ -60,10 +67,16 @@ static void MouseMoveCallback(GLFWwindow *, double xpos, double ypos) {
   sMousePosition = {static_cast<uint32_t>(xpos), static_cast<uint32_t>(ypos)};
 }
 
+static void MouseScrollCallback(GLFWwindow *, double xoffset, double yoffset) {
+  sMouseScrollDeltaX = xoffset;
+  sMouseScrollDeltaY = yoffset;
+}
+
 void InputInit() {
   glfwSetKeyCallback(sWindow, InputKeyCallback);
   glfwSetMouseButtonCallback(sWindow, MouseButtonCallback);
   glfwSetCursorPosCallback(sWindow, MouseMoveCallback);
+  glfwSetScrollCallback(sWindow, MouseScrollCallback);
 
   double xpos, ypos;
   glfwGetCursorPos(sWindow, &xpos, &ypos);
@@ -79,6 +92,8 @@ void InputUpdate() {
   // Clear deltas
   sMouseDeltaX = 0.0;
   sMouseDeltaY = 0.0;
+  sMouseScrollDeltaX = 0.0;
+  sMouseScrollDeltaY = 0.0;
 }
 
 CBZBool32 IsKeyDown(Key key) {
@@ -129,10 +144,10 @@ namespace input {
 double GetAxis(Axis axis) {
   switch (axis) {
   case Axis::MouseX: {
-    return glm::sign(sMouseDeltaX);
+    return sMouseDeltaX;
   } break;
   case Axis::MouseY: {
-    return -glm::sign(sMouseDeltaY);
+    return sMouseDeltaY;
   } break;
   }
 
@@ -252,8 +267,22 @@ VertexBufferHandle VertexBufferCreate(const VertexLayout &vertexLayout,
   return vbh;
 }
 
-void VertexBufferSet(VertexBufferHandle vbh) {
-  sShaderProgramCmds[sNextShaderProgramCmdIdx].program.graphics.vbh = vbh;
+void VertexBufferUpdate(VertexBufferHandle vbh, uint32_t elementCount,
+                        const void *data, uint32_t offset) {
+  sRenderer->vertexBufferUpdate(vbh, elementCount, data, offset);
+}
+
+void VertexBufferSet(VertexBufferHandle vbh, uint32_t instances) {
+  ShaderProgramCommand &cmd = sShaderProgramCmds[sNextShaderProgramCmdIdx];
+
+  if (cmd.program.graphics.vbCount >= MAX_VERTEX_INPUT_BINDINGS) {
+    sLogger->error("Surpassed max vertex input bindings of {}",
+                   static_cast<uint32_t>(MAX_VERTEX_INPUT_BINDINGS));
+    return;
+  }
+
+  cmd.program.graphics.instances = instances;
+  cmd.program.graphics.vbhs[cmd.program.graphics.vbCount++] = vbh;
 }
 
 void VertexBufferDestroy(VertexBufferHandle vbh) {
@@ -635,9 +664,10 @@ void Submit(uint8_t target, GraphicsProgramHandle gph) {
   currentCommand->program.graphics.ph = gph;
 
   currentCommand->target = target;
+
   currentCommand->sortKey =
       (uint64_t)(gph.idx & 0xFFFF) << 48 |
-      (uint64_t)(currentCommand->program.graphics.vbh.idx & 0xFFFF) << 32 |
+      (uint64_t)(currentCommand->program.graphics.vbhs[0].idx & 0xFFFF) << 32 |
       (uint64_t)(uniformHash & 0xFFFFFFFF);
   currentCommand->submissionID = sNextShaderProgramCmdIdx++;
 }
@@ -728,8 +758,15 @@ uint32_t Frame() {
 
   // Clear submissions
   for (uint32_t i = 0; i < sNextShaderProgramCmdIdx; i++) {
-    sShaderProgramCmds[i].bindings.clear();
+    // Clear program data
+    memset(&sShaderProgramCmds[i].program, 0,
+           sizeof(sShaderProgramCmds[i].program));
     sShaderProgramCmds[i].programType = CBZ_TARGET_TYPE_NONE;
+
+    // Clear binding data
+    sShaderProgramCmds[i].bindings.clear();
+
+    // Set sort key to invalid
     sShaderProgramCmds[i].sortKey = std::numeric_limits<uint64_t>::max();
   }
   sNextShaderProgramCmdIdx = 0;
@@ -762,9 +799,11 @@ void VertexLayout::begin(CBZVertexStepMode mode) {
 }
 
 void VertexLayout::push_attribute(CBZVertexAttributeType,
-                                  CBZVertexFormat format) {
+                                  CBZVertexFormat format,
+                                  uint32_t locationOffset) {
   attributes.push_back(
-      {format, stride, static_cast<uint32_t>(attributes.size())});
+      {format, stride,
+       static_cast<uint32_t>(attributes.size()) + locationOffset});
 
   stride += VertexFormatGetSize(format);
 }

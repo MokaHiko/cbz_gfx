@@ -26,14 +26,14 @@ namespace cbz {
 class ShaderWebGPU {
 public:
   [[nodiscard]] Result create(const std::string &path, CBZShaderFlags flags);
+
   void destroy();
+
+  [[nodiscard]] WGPUBindGroupLayout
+  findOrCreateBindGroupLayout(const Binding *bindings, uint32_t bindingCount);
 
   [[nodiscard]] const inline VertexLayout &getVertexLayout() const {
     return mVertexLayout;
-  };
-
-  [[nodiscard]] const inline WGPUBindGroupLayout &getBindGroupLayout() const {
-    return mBindGroupLayout;
   };
 
   [[nodiscard]] const inline std::vector<BindingDesc> &getBindings() const {
@@ -57,7 +57,7 @@ private:
 
 private:
   std::vector<BindingDesc> mBindingDescs;
-  WGPUBindGroupLayout mBindGroupLayout = NULL;
+  std::unordered_map<uint32_t, WGPUBindGroupLayout> mBindGroupLayouts;
 
   VertexLayout mVertexLayout;
 
@@ -71,8 +71,11 @@ public:
                               const void *data = nullptr,
                               const std::string &name = "");
 
+  void update(const void *data, uint32_t elementCount,
+              uint32_t elementOffset = 0);
+
   [[nodiscard]] Result bind(WGPURenderPassEncoder renderPassEncoder,
-                            uint32_t slot = 0) const;
+                            uint32_t slot) const;
   void destroy();
 
   [[nodiscard]] inline uint32_t getVertexCount() const { return mVertexCount; }
@@ -194,8 +197,10 @@ public:
             wgpuTextureGetDepthOrArrayLayers(mTexture)};
   }
 
-  [[nodiscard]] WGPUTextureView
-  findOrCreateTextureView(WGPUTextureAspect aspect, uint32_t baseArrayLayer = 0, uint32_t arrayLayerCount = 1, CBZTextureViewDimension viewDimension = CBZ_TEXTURE_VIEW_DIMENSION_2D);
+  [[nodiscard]] WGPUTextureView findOrCreateTextureView(
+      WGPUTextureAspect aspect, uint32_t baseArrayLayer = 0,
+      uint32_t arrayLayerCount = 1,
+      CBZTextureViewDimension viewDimension = CBZ_TEXTURE_VIEW_DIMENSION_2D);
 
   void destroyTextureViews();
 
@@ -214,7 +219,9 @@ public:
                               const std::string &name = "");
 
   [[nodiscard]] WGPURenderPipeline
-  findOrCreatePipeline(const RenderTarget &target);
+  findOrCreatePipeline(const RenderTarget &target,
+                       WGPUBindGroupLayout bindGroupLayout,
+                       const VertexBufferHandle *vbhs, uint32_t vbCount);
 
   [[nodiscard]] inline const ShaderHandle getShader() const {
     return mShaderHandle;
@@ -224,12 +231,10 @@ public:
 
 private:
   std::unordered_map<uint32_t, WGPURenderPipeline> mPipelines;
+  std::unordered_map<uint32_t, WGPUPipelineLayout> mPipelineLayouts;
 
   int mFlags;
   ShaderHandle mShaderHandle;
-
-  WGPUPipelineLayout mPipelineLayout;
-  WGPURenderPipeline mPipeline;
 };
 
 class ComputeProgramWebGPU {

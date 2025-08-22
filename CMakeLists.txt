@@ -8,6 +8,8 @@ if (NOT EMSCRIPTEN)
     add_subdirectory(third_party/glfw)
     add_subdirectory(third_party/wgpu-native)
 
+    include(FetchContent)
+
     set(ASIO_BUILD_EXAMPLES OFF CACHE INTERNAL "")
     set(ASIO_BUILD_TESTS OFF CACHE INTERNAL "")
     set(ASIO_BUILD_DOCS OFF CACHE INTERNAL "")
@@ -97,5 +99,5 @@ if (XCODE)
 endif()
 
 if(CBZ_GFX_BUILD_EXAMPLES)
-    # add_subdirectory(examples)
+    add_subdirectory(examples)
 endif()
